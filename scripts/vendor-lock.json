@@ -2,14 +2,14 @@
   "comment": "Pinned third-party runtimes for LoopForge Desktop. Fetch with: node scripts/fetch-vendors.js",
   "git": {
     "id": "git",
-    "name": "Git for Windows MinGit (BusyBox)",
+    "name": "Git for Windows MinGit (real GNU Bash)",
     "version": "2.56.1.windows.1",
-    "url": "https://github.com/git-for-windows/git/releases/download/v2.56.1.windows.1/MinGit-2.56.1-busybox-64-bit.zip",
-    "sha256": "baa40c1b8d5897826f47c2b819156553b89833bc52cb42cdfca7d1f0faeed34a",
+    "url": "https://github.com/git-for-windows/git/releases/download/v2.56.1.windows.1/MinGit-2.56.1-64-bit.zip",
+    "sha256": "4a92850b6e917da4fd010669b614b55dccf5b0ec333a534cc4be4700dfefdafd",
     "dest": "vendor-dl/git",
     "strip": 0,
-    "postProcess": "mingit-busybox-shells",
-    "why": "LoopForge SOP script nodes run as `sh -lc`, git SSH helpers call `sh -c`, and some on-demand CLI installers run `bash -c`. Plain MinGit ships git.exe only. Official MinGit+busybox is the smallest official Git for Windows bundle that still provides a POSIX shell (busybox ash/sh and bash applets). Full PortableGit unpacked to ~323 MB; this bundle unpacks to ~84 MB. After extract, fetch-vendors adds ucrt64/bin/sh.exe (copy of the official git-wrapper/ash.exe so argv0 selects busybox sh) and ucrt64/bin/bash.exe (copy of busybox.exe so argv0 selects the bash applet). Do not copy the wrapper as bash.exe — that re-execs itself (fork-bomb)."
+    "postProcess": "mingit-bash",
+    "why": "Regular official MinGit includes GNU Bash as usr/bin/sh.exe. Copying that same real Bash binary to bash.exe enables its normal Bash mode (not BusyBox pretending to be Bash). Upstream cli_ondemand.go uses bash -c and pipes official scripts to bash; SOP nodes use sh -lc. CI proves BASH_VERSION, arrays and [[ ]] in a path containing spaces. BusyBox is no longer bundled."
   },
   "node": {
     "id": "node",
@@ -30,23 +30,17 @@
     "strip": 0,
     "postProcess": "python-embed-site"
   },
-  "getPip": {
-    "id": "get-pip",
-    "name": "get-pip.py (optional, copied next to the embeddable Python)",
-    "url": "https://bootstrap.pypa.io/pip/3.11/get-pip.py",
-    "sha256": "356e0d0de21cdc348c3394084d90939b85e4246c4d14c76aee6ca4f46646ea98",
-    "optional": true
-  },
   "loopforge": {
     "repo": "https://github.com/Tencent/LoopForge.git",
     "commit": "69e4bf093cf26dc72a2b0bc5d7452f86ce96f660",
     "patch": "patches/0001-desktop-no-docker-hide-console.patch",
-    "note": "Windows bins are built from this commit plus the desktop no-Docker / hidden-console patch. See scripts/build-loopforge-bins.js. The desktop installer ships only Windows binaries: agentflow.exe, agentflow-mcp.exe, agentflow-runner-windows-amd64, agentflow-gate-mcp-windows-amd64. Linux runner/gate-mcp and loopforge-account.exe are not packaged.",
-    "bins": {
-      "agentflow.exe": { "sha256": "32623ae9f8da7712d3bfb19d7edd61fa9ecb6a61795d1b7ff59af848bebc42f6" },
-      "agentflow-mcp.exe": { "sha256": "532ce9b6ece937a16fa60a5e0cc93f377a2ce5d0e3735edf0eadcccabcc40ed7" },
-      "agentflow-runner-windows-amd64": { "sha256": "913138675492e15d6960c6fd0f94fd62e100ed52a4c31041e9abb0eaf0670cf4" },
-      "agentflow-gate-mcp-windows-amd64": { "sha256": "308df1e59188a269a964be74c6a50807460ee6ac55c12af9c592b27fed53029f" }
-    }
+    "note": "Always build all four Windows binaries from pristine pinned git archive plus verified desktop patch; never reuse dirty working-tree output or historical binary hashes. Build native-chat first with upstream npm lockfile. Emit resources/bin/build-manifest.json with source/patch/toolchain and per-binary SHA256; windows CI uploads it. Cross-platform byte-identical executable output is not promised.",
+    "goVersion": "go1.27.3",
+    "patchSha256": "c3ad93e0dcb0507002b0f3d603c26ea3bb5485c9a70beed467fe8e1ebc21aae8"
+  },
+  "pip": {
+    "version": "24.3.1",
+    "url": "https://files.pythonhosted.org/packages/ef/7d/500c9ad20238fcfcb4cb9243eede163594d7020ce87bd9610c9e02771876/pip-24.3.1-py3-none-any.whl",
+    "sha256": "3790624780082365f47549d032f3770eeb2b1e8bd1f7b2e02dace1afa361b4ed"
   }
 }

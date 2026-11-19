@@ -5,3 +5,4 @@ resources/bin/
 *.exe
 *.zip
 .DS_Store
+.smoke/

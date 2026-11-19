@@ -2,7 +2,7 @@
 // GitHub Releases auto-update. The installer is unsigned unless CSC_LINK is used at build time.
 const { app, dialog } = require('electron');
 
-function setupAutoUpdate({ isWin, getWindow, log }) {
+function setupAutoUpdate({ isWin, getWindow, log, onInstall }) {
   const api = {
     check: async (manual) => {
       if (manual) dialog.showMessageBox({ type: 'info', message: '当前构建未包含自动更新模块。' });
@@ -17,10 +17,10 @@ function setupAutoUpdate({ isWin, getWindow, log }) {
     return api;
   }
   autoUpdater.autoDownload = true;
-  autoUpdater.autoInstallOnAppQuit = true;
+  autoUpdater.autoInstallOnAppQuit = false;
   autoUpdater.allowPrerelease = false;
   // Builds are typically unsigned. Do not pretend a signature will be verified.
-  if (isWin && typeof autoUpdater.verifyUpdateCodeSignature !== 'undefined') {
+  if (isWin) {
     autoUpdater.verifyUpdateCodeSignature = false;
   }
   autoUpdater.on('error', (err) => { if (log) log('auto-update: ' + String(err && err.message || err)); });
@@ -38,7 +38,9 @@ function setupAutoUpdate({ isWin, getWindow, log }) {
     };
     const p = win ? dialog.showMessageBox(win, opts) : dialog.showMessageBox(opts);
     p.then(({ response }) => {
-      if (response === 0) autoUpdater.quitAndInstall(false, true);
+      if (response === 0) {
+        Promise.resolve(onInstall && onInstall()).then(() => autoUpdater.quitAndInstall(false, true));
+      }
     }).catch(() => { /* ignore */ });
   });
   api.check = async (manual) => {

@@ -10,6 +10,7 @@ function canEncrypt(isWin) {
 
 function toDisk(cfg, isWin) {
   const out = { ...cfg };
+  delete out.sessionSecretEnc; // Never retain stale ciphertext on encryption failure.
   if (out.sessionSecret && canEncrypt(isWin)) {
     try {
       out.sessionSecretEnc = safeStorage.encryptString(out.sessionSecret).toString('base64');

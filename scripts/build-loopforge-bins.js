@@ -1,146 +1,82 @@
 #!/usr/bin/env node
 'use strict';
-// Build Windows LoopForge sidecar bins from the pinned upstream commit + desktop patch.
-// Does not package Linux binaries or loopforge-account.exe.
+// No dirty clone reuse: archive an exact revision, apply the entire verified
+// desktop delta, build frontend from its npm lock, then compile every binary.
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const { spawnSync } = require('child_process');
-
 const ROOT = path.resolve(__dirname, '..');
-const LOCK = JSON.parse(fs.readFileSync(path.join(__dirname, 'vendor-lock.json'), 'utf8'));
+const lock = require('./vendor-lock.json').loopforge;
 const DEST = path.join(ROOT, 'resources', 'bin');
-const CACHE = path.join(ROOT, 'vendor-dl', '_src');
-const skipVerify = process.argv.includes('--skip-hash-verify');
-const forceBuild = process.argv.includes('--force');
-
-function log(msg) { process.stdout.write(msg + '\n'); }
-function fail(msg) { process.stderr.write('error: ' + msg + '\n'); process.exit(1); }
-function sha256File(file) {
-  const hash = crypto.createHash('sha256');
-  hash.update(fs.readFileSync(file));
-  return hash.digest('hex');
+const OWN = path.join(ROOT, 'vendor-dl', '_src');
+const SOURCE = path.join(OWN, 'prepared');
+const sha = (p) => crypto.createHash('sha256').update(fs.readFileSync(p)).digest('hex');
+function run(cmd, args, opts = {}) {
+  console.log('+', cmd, ...args);
+  const result = spawnSync(cmd, args, { stdio: 'inherit', ...opts });
+  if (result.error) throw result.error;
+  if (result.status !== 0) throw new Error(`${cmd} exited ${result.status}`);
 }
-function run(cmd, args, opts) {
-  log('+ ' + [cmd, ...args].join(' '));
-  const r = spawnSync(cmd, args, { stdio: 'inherit', ...opts });
-  if (r.error) throw r.error;
-  if (r.status !== 0) throw new Error(cmd + ' exited ' + r.status);
+function output(cmd, args, opts = {}) {
+  const r = spawnSync(cmd, args, { encoding: 'utf8', ...opts });
+  if (r.status !== 0) throw new Error(r.stderr || `${cmd} failed`);
+  return r.stdout.trim();
 }
-function which(name) {
-  const r = spawnSync(process.platform === 'win32' ? 'where' : 'which', [name], { encoding: 'utf8' });
-  return r.status === 0;
+const patch = path.join(ROOT, lock.patch);
+if (sha(patch) !== lock.patchSha256) throw new Error('Desktop patch SHA256 mismatch');
+const goVersion = output('go', ['version']).split(' ')[2];
+if (goVersion !== lock.goVersion) throw new Error(`Use pinned ${lock.goVersion}, found ${goVersion}`);
+fs.mkdirSync(OWN, { recursive: true });
+let repo = process.env.LOOPFORGE_SRC;
+if (!repo && fs.existsSync('/workspace/LoopForge/.git')) repo = '/workspace/LoopForge';
+if (!repo) {
+  repo = path.join(OWN, 'upstream');
+  if (!fs.existsSync(path.join(repo, '.git'))) {
+    fs.mkdirSync(repo, { recursive: true });
+    run('git', ['init', repo]);
+  }
+  run('git', ['-c', 'core.longpaths=true', 'fetch', '--depth=1', lock.repo, lock.commit], { cwd: repo });
 }
-
-const WANTED = [
-  { name: 'agentflow.exe', pkg: './cmd/agentflow' },
-  { name: 'agentflow-mcp.exe', pkg: './cmd/agentflow-mcp' },
-  { name: 'agentflow-runner-windows-amd64', pkg: './cmd/agentflow-runner' },
-  { name: 'agentflow-gate-mcp-windows-amd64', pkg: './cmd/agentflow-gate-mcp' },
-];
-
-function existingMatch() {
-  if (forceBuild) return false;
-  const bins = LOCK.loopforge.bins || {};
-  return WANTED.every((b) => {
-    const p = path.join(DEST, b.name);
-    if (!fs.existsSync(p) || !fs.statSync(p).size) return false;
-    const expected = bins[b.name] && bins[b.name].sha256;
-    if (!expected || skipVerify) return true;
-    const got = sha256File(p);
-    if (got !== expected) {
-      log('hash mismatch for ' + b.name + ' (will rebuild)\n  expected ' + expected + '\n  got      ' + got);
-      return false;
-    }
-    return true;
+const actual = output('git', ['rev-parse', `${lock.commit}^{commit}`], { cwd: repo });
+if (actual !== lock.commit) throw new Error('Pinned commit unavailable');
+// Archive ignores ALL local changes. Remove only this script's prepared output.
+fs.rmSync(SOURCE, { recursive: true, force: true });
+fs.mkdirSync(SOURCE, { recursive: true });
+const archive = path.join(OWN, 'upstream.tar');
+run('git', ['archive', '--format=tar', '-o', archive, lock.commit], { cwd: repo });
+run('tar', ['-xf', archive, '-C', SOURCE]);
+// Isolate git apply from the outer desktop repository (vendor-dl is ignored).
+run('git', ['init', SOURCE]);
+run('git', ['config', 'core.longpaths', 'true'], { cwd: SOURCE });
+run('git', ['apply', '--check', patch], { cwd: SOURCE });
+run('git', ['apply', '--whitespace=nowarn', patch], { cwd: SOURCE });
+// npm.cmd must not be spawned directly or shell:true. Invoke npm-cli via node.
+const npmCli = process.env.npm_execpath || path.join(path.dirname(process.execPath), 'node_modules/npm/bin/npm-cli.js');
+if (!fs.existsSync(npmCli)) throw new Error(`npm-cli.js not found: ${npmCli}; invoke via npm run build-bins`);
+run(process.execPath, [npmCli, '--prefix', 'chatbot', 'ci', '--include=dev', '--no-audit', '--no-fund'], { cwd: SOURCE });
+run(process.execPath, [npmCli, '--prefix', 'chatbot', 'run', 'build'], { cwd: SOURCE });
+fs.mkdirSync(DEST, { recursive: true });
+const wanted = {
+  'agentflow.exe': './cmd/agentflow',
+  'agentflow-mcp.exe': './cmd/agentflow-mcp',
+  'agentflow-runner-windows-amd64': './cmd/agentflow-runner',
+  'agentflow-gate-mcp-windows-amd64': './cmd/agentflow-gate-mcp',
+};
+const bins = {};
+for (const [name, pkg] of Object.entries(wanted)) {
+  const out = path.join(DEST, name);
+  run('go', ['build', '-buildvcs=false', '-trimpath', '-ldflags=-s -w -H=windowsgui -buildid=', '-o', out, pkg], {
+    cwd: SOURCE, env: { ...process.env, CGO_ENABLED: '0', GOOS: 'windows', GOARCH: 'amd64', GOTOOLCHAIN: 'local' },
   });
+  bins[name] = { sha256: sha(out), bytes: fs.statSync(out).size };
 }
-
-function resolveSource() {
-  const envSrc = process.env.LOOPFORGE_SRC;
-  if (envSrc && fs.existsSync(path.join(envSrc, 'cmd', 'agentflow'))) return path.resolve(envSrc);
-  // Local clone used during packaging on this machine.
-  const local = '/workspace/LoopForge';
-  if (fs.existsSync(path.join(local, 'cmd', 'agentflow'))) return local;
-  return null;
+for (const name of fs.readdirSync(DEST)) {
+  if (/-linux-/.test(name) || /^loopforge-account/.test(name)) fs.rmSync(path.join(DEST, name));
 }
-
-function checkoutUpstream() {
-  const dest = path.join(CACHE, 'LoopForge');
-  const commit = LOCK.loopforge.commit;
-  const repo = LOCK.loopforge.repo;
-  fs.mkdirSync(CACHE, { recursive: true });
-  if (!fs.existsSync(path.join(dest, '.git'))) {
-    run('git', ['clone', '--filter=blob:none', repo, dest]);
-  }
-  run('git', ['fetch', '--depth', '1', 'origin', commit], { cwd: dest });
-  run('git', ['checkout', '--force', commit], { cwd: dest });
-  run('git', ['clean', '-fdx', '-e', '.git'], { cwd: dest });
-  const patch = path.join(ROOT, LOCK.loopforge.patch);
-  const check = spawnSync('git', ['apply', '--check', patch], { cwd: dest, encoding: 'utf8' });
-  if (check.status === 0) run('git', ['apply', patch], { cwd: dest });
-  else log('patch already applied or not applicable, continuing: ' + (check.stderr || check.stdout || '').trim());
-  return dest;
-}
-
-function build(src) {
-  if (!which('go') && !which('go.exe')) fail('go toolchain not found on PATH');
-  fs.mkdirSync(DEST, { recursive: true });
-  const env = {
-    ...process.env,
-    CGO_ENABLED: '0',
-    GOOS: 'windows',
-    GOARCH: 'amd64',
-  };
-  const ldflags = '-s -w -H=windowsgui -buildid=';
-  for (const b of WANTED) {
-    const out = path.join(DEST, b.name);
-    run('go', ['build', '-trimpath', '-ldflags', ldflags, '-o', out, b.pkg], { cwd: src, env });
-  }
-}
-
-function pruneUnwanted() {
-  for (const name of fs.readdirSync(DEST)) {
-    if (/-linux-/.test(name) || /^loopforge-account/i.test(name)) {
-      fs.unlinkSync(path.join(DEST, name));
-      log('removed unpackaged ' + name);
-    }
-  }
-}
-
-function report() {
-  log('Windows bins in ' + DEST);
-  const bins = LOCK.loopforge.bins || {};
-  for (const b of WANTED) {
-    const p = path.join(DEST, b.name);
-    const st = fs.statSync(p);
-    const got = sha256File(p);
-    const expected = bins[b.name] && bins[b.name].sha256;
-    const mark = !expected ? ' (no lock hash)' : (got === expected ? ' (matches lock)' : ' (differs from lock; rebuilds are not bit-reproducible)');
-    log(got + '  ' + b.name + '  ' + st.size + ' bytes' + mark);
-  }
-}
-
-if (existingMatch()) {
-  log('existing Windows bins match vendor-lock.json, skipping build');
-  pruneUnwanted();
-  report();
-  process.exit(0);
-}
-
-let src = resolveSource();
-if (src) {
-  log('using LoopForge source at ' + src);
-  const patch = path.join(ROOT, LOCK.loopforge.patch);
-  // Apply patch only when the working tree looks unpatched. Never wipe a local clone.
-  const probe = spawnSync('git', ['apply', '--check', patch], { cwd: src, encoding: 'utf8' });
-  if (probe.status === 0) {
-    log('applying desktop patch');
-    run('git', ['apply', patch], { cwd: src });
-  }
-} else {
-  src = checkoutUpstream();
-}
-build(src);
-pruneUnwanted();
-report();
+fs.writeFileSync(path.join(DEST, 'build-manifest.json'), JSON.stringify({
+  sourceUrl: lock.repo, commit: lock.commit, patchSha256: lock.patchSha256,
+  goVersion, nodeVersion: process.versions.node,
+  frontendLockSha256: sha(path.join(SOURCE, 'chatbot/package-lock.json')), bins,
+}, null, 2) + '\n');
+console.log('Build provenance:', JSON.stringify(bins, null, 2));

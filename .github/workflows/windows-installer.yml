@@ -20,22 +20,28 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '22'
+          node-version: '22.23.5'
           cache: npm
 
       - name: Setup Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.27'
+          go-version: '1.27.3'
 
       - name: Fetch pinned Git / Node / Python
         run: node scripts/fetch-vendors.js
 
       - name: Build LoopForge Windows binaries
-        run: node scripts/build-loopforge-bins.js --skip-hash-verify
+        run: npm run build-bins
 
       - name: Install npm dependencies
         run: npm ci
+
+      - name: Unit security tests
+        run: npm test
+
+      - name: Native Windows runtime smoke (paths containing spaces, no GUI)
+        run: npm run smoke:windows
 
       - name: Build unsigned NSIS installer
         env:
@@ -55,3 +61,5 @@ jobs:
             dist/LoopForge-Setup-*.exe
             dist/LoopForge-Setup-*.exe.blockmap
             dist/latest.yml
+            resources/bin/build-manifest.json
+            .smoke/result.json

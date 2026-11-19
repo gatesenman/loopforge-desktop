@@ -1,3 +1,710 @@
+diff --git a/internal/httpapi/assistant_native_session.go b/internal/httpapi/assistant_native_session.go
+index e4d679d..6097e1f 100644
+--- a/internal/httpapi/assistant_native_session.go
++++ b/internal/httpapi/assistant_native_session.go
+@@ -9,9 +9,9 @@ import (
+ 	"os"
+ 	"path/filepath"
+ 	"strings"
+-	"syscall"
+ 
+ 	"agentflow/internal/domain"
++	"agentflow/internal/osx"
+ 	"agentflow/internal/runtime"
+ )
+ 
+@@ -66,9 +66,9 @@ func openAssistantNativeSession(req assistantRequest, saved domain.AssistantSess
+ 	if err != nil {
+ 		return nil, err
+ 	}
+-	if err = syscall.Flock(int(lock.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
++	if err = osx.TryLock(lock); err != nil {
+ 		_ = lock.Close()
+-		if err == syscall.EWOULDBLOCK || err == syscall.EAGAIN {
++		if err == osx.ErrLocked {
+ 			return nil, errAssistantNativeBusy
+ 		}
+ 		return nil, err
+@@ -109,7 +109,7 @@ func openAssistantNativeSession(req assistantRequest, saved domain.AssistantSess
+ 
+ func (n *assistantNativeSession) Close() {
+ 	if n != nil && n.lock != nil {
+-		_ = syscall.Flock(int(n.lock.Fd()), syscall.LOCK_UN)
++		_ = osx.Unlock(n.lock)
+ 		_ = n.lock.Close()
+ 		n.lock = nil
+ 	}
+diff --git a/internal/preview/archive.go b/internal/preview/archive.go
+index 3604766..430aee7 100644
+--- a/internal/preview/archive.go
++++ b/internal/preview/archive.go
+@@ -1,6 +1,7 @@
+ package preview
+ 
+ import (
++	"agentflow/internal/osx"
+ 	"archive/tar"
+ 	"bytes"
+ 	"crypto/sha256"
+@@ -15,7 +16,6 @@ import (
+ 	"slices"
+ 	"sort"
+ 	"strings"
+-	"syscall"
+ 	"time"
+ 
+ 	"github.com/klauspost/compress/zstd"
+@@ -213,7 +213,7 @@ func rejectSpecial(path string, info os.FileInfo) error {
+ 	if info.IsDir() {
+ 		return nil
+ 	}
+-	if stat, ok := info.Sys().(*syscall.Stat_t); ok && stat.Nlink > 1 {
++	if stat, ok := osx.Identity(info); ok && stat.Nlink > 1 {
+ 		return fmt.Errorf("%w: hardlink %s", ErrUnsupportedEntry, path)
+ 	}
+ 	return nil
+diff --git a/internal/repo/repo.go b/internal/repo/repo.go
+index e7367b1..38467a0 100644
+--- a/internal/repo/repo.go
++++ b/internal/repo/repo.go
+@@ -229,6 +229,9 @@ func Open(dsn string) (*Store, error) {
+ 	if dsn == "" {
+ 		dsn = strings.TrimSpace(os.Getenv("AGENTFLOW_MYSQL_DSN"))
+ 	}
++	if path, ok := sqlitePathFromDSN(dsn); ok {
++		return openSQLite(path)
++	}
+ 	if dsn == "" {
+ 		return nil, errors.New("AGENTFLOW_MYSQL_DSN 未配置：MySQL 是唯一数据源，缺少 DSN 时拒绝启动")
+ 	}
+diff --git a/internal/runner/daemon.go b/internal/runner/daemon.go
+index c4ea0e8..2db15b8 100644
+--- a/internal/runner/daemon.go
++++ b/internal/runner/daemon.go
+@@ -623,6 +623,9 @@ func (d *Daemon) executeRunCleanup(ctx context.Context, task domain.RunnerTask)
+ }
+ 
+ func cleanupDockerWorkspace(ctx context.Context, workspace string) error {
++	if runtime.DesktopHostRuntime() {
++		return nil
++	}
+ 	if _, err := exec.LookPath("docker"); err != nil {
+ 		return nil
+ 	}
+diff --git a/internal/runner/exec.go b/internal/runner/exec.go
+index 4cb4de7..eb47dc1 100644
+--- a/internal/runner/exec.go
++++ b/internal/runner/exec.go
+@@ -12,10 +12,10 @@ import (
+ 	"runtime"
+ 	"strings"
+ 	"sync"
+-	"syscall"
+ 	"time"
+ 
+ 	"agentflow/internal/domain"
++	"agentflow/internal/osx"
+ 	flowruntime "agentflow/internal/runtime"
+ )
+ 
+@@ -466,13 +466,7 @@ func asExitError(err error, target **exec.ExitError) bool {
+ // setProcessGroup puts the CLI and all of its children into a new process
+ // group so a cancel cannot leave orphaned shells or MCP servers behind.
+ func setProcessGroup(cmd *exec.Cmd) {
+-	if runtime.GOOS == "windows" {
+-		return
+-	}
+-	if cmd.SysProcAttr == nil {
+-		cmd.SysProcAttr = &syscall.SysProcAttr{}
+-	}
+-	cmd.SysProcAttr.Setpgid = true
++	osx.SetProcessGroup(cmd)
+ }
+ 
+ // terminateProcessGroup sends SIGTERM to the whole group, waits a grace
+@@ -488,17 +482,17 @@ func terminateProcessGroup(cmd *exec.Cmd, processDone <-chan struct{}) {
+ 		return
+ 	}
+ 	if runtime.GOOS == "windows" {
+-		_ = cmd.Process.Kill()
++		_ = osx.KillGroup(cmd.Process.Pid)
+ 		return
+ 	}
+-	pgid := -cmd.Process.Pid
+-	_ = syscall.Kill(pgid, syscall.SIGTERM)
++	pid := cmd.Process.Pid
++	_ = osx.TerminateGroup(pid)
+ 	timer := time.NewTimer(cancelGrace)
+ 	defer timer.Stop()
+ 	select {
+ 	case <-processDone:
+ 	case <-timer.C:
+-		_ = syscall.Kill(pgid, syscall.SIGKILL)
++		_ = osx.KillGroup(pid)
+ 	}
+ }
+ 
+diff --git a/internal/runtime/browser.go b/internal/runtime/browser.go
+index 7ef587b..d317d46 100644
+--- a/internal/runtime/browser.go
++++ b/internal/runtime/browser.go
+@@ -7,7 +7,6 @@ import (
+ 	"embed"
+ 	"encoding/hex"
+ 	"encoding/json"
+-	"errors"
+ 	"fmt"
+ 	"io/fs"
+ 	"net/http"
+@@ -19,11 +18,11 @@ import (
+ 	"strconv"
+ 	"strings"
+ 	"sync"
+-	"syscall"
+ 	"testing"
+ 	"time"
+ 
+ 	"agentflow/internal/domain"
++	"agentflow/internal/osx"
+ )
+ 
+ //go:embed browser_assets/Dockerfile browser_assets/entrypoint.sh browser_assets/cdp-relay.mjs
+@@ -347,7 +346,7 @@ func ensureHostBrowser(ctx context.Context, workspace, runID string) (domain.MCP
+ 			args = append(args, "--no-sandbox", "--disable-dev-shm-usage")
+ 		}
+ 		cmd := exec.Command(binary, append(args, "about:blank")...)
+-		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
++		osx.SetProcessGroup(cmd)
+ 		if err := cmd.Start(); err != nil {
+ 			return domain.MCPServerDefinition{}, fmt.Errorf("启动 Chromium 失败: %w", err)
+ 		}
+@@ -404,11 +403,11 @@ func waitDevToolsActivePort(ctx context.Context, profile string, exited <-chan s
+ 
+ func (b *hostBrowser) stop() {
+ 	if b.cmd.Process != nil {
+-		_ = syscall.Kill(-b.cmd.Process.Pid, syscall.SIGTERM)
++		_ = osx.TerminateGroup(b.cmd.Process.Pid)
+ 		select {
+ 		case <-b.exited:
+ 		case <-time.After(3 * time.Second):
+-			_ = syscall.Kill(-b.cmd.Process.Pid, syscall.SIGKILL)
++			_ = osx.KillGroup(b.cmd.Process.Pid)
+ 		}
+ 	}
+ 	_ = os.RemoveAll(b.dir)
+@@ -477,15 +476,14 @@ func reapOrphanHostBrowsers() {
+ 			continue
+ 		}
+ 		if record.PID > 0 && processAlive(record.PID) {
+-			_ = syscall.Kill(-record.PID, syscall.SIGKILL)
++			_ = osx.KillGroup(record.PID)
+ 		}
+ 		_ = os.RemoveAll(dir)
+ 	}
+ }
+ 
+ func processAlive(pid int) bool {
+-	err := syscall.Kill(pid, 0)
+-	return err == nil || errors.Is(err, syscall.EPERM)
++	return osx.Alive(pid)
+ }
+ 
+ // FindChromium locates a Chromium-family binary for host drivers.
+@@ -526,7 +524,7 @@ func FindChromium() (string, error) {
+ func lookupBrowserEndpoint(ctx context.Context, runID string) (browserEndpoint, bool) {
+ 	if raw, err := os.ReadFile(filepath.Join(hostBrowserDir(runID), "endpoint.json")); err == nil {
+ 		var record hostBrowserRecord
+-		if json.Unmarshal(raw, &record) == nil && record.PID > 0 && syscall.Kill(record.PID, 0) == nil && hostDevToolsAlive(ctx, record.Port) {
++		if json.Unmarshal(raw, &record) == nil && record.PID > 0 && osx.Signalable(record.PID) && hostDevToolsAlive(ctx, record.Port) {
+ 			return browserEndpoint{Kind: "local", WebSocket: record.WebSocket, Workspace: record.Workspace}, true
+ 		}
+ 	}
+diff --git a/internal/runtime/conversation_process.go b/internal/runtime/conversation_process.go
+index a9da017..b61594b 100644
+--- a/internal/runtime/conversation_process.go
++++ b/internal/runtime/conversation_process.go
+@@ -474,13 +474,19 @@ func (p *ConversationProcessPool) start(ctx context.Context, root, workspace str
+ 	}
+ 	if spec != nil {
+ 		profile := spec.Profile
++		if spec.Dockerfile != nil {
++			profile, *spec.Dockerfile = isolateLocalDriver(profile, *spec.Dockerfile)
++		} else {
++			profile, _ = isolateLocalDriver(profile, domain.DockerfileDefinition{})
++		}
+ 		if profile.Driver == domain.SandboxDriverNative {
+ 			if profile.Driver, err = domain.ResolveSandboxDriver(profile.Driver, goruntime.GOOS); err != nil {
+ 				return ConversationProcessResult{}, err
+ 			}
+ 		}
+-		if profile.Driver != domain.SandboxDriverDocker && profile.Driver != domain.SandboxDriverBwrap && profile.Driver != domain.SandboxDriverSeatbelt {
+-			return ConversationProcessResult{}, fmt.Errorf("对话工作区只支持 Docker 或 native 沙箱")
++		allowed := profile.Driver == domain.SandboxDriverDocker || profile.Driver == domain.SandboxDriverBwrap || profile.Driver == domain.SandboxDriverSeatbelt || profile.Driver == domain.SandboxDriverLocal || profile.Driver == ""
++		if !allowed {
++			return ConversationProcessResult{}, fmt.Errorf("对话工作区只支持 Docker、native 或本机执行沙箱")
+ 		}
+ 		resolved := *spec
+ 		resolved.Profile = profile
+diff --git a/internal/runtime/gate_mcp.go b/internal/runtime/gate_mcp.go
+index c78c537..15e685c 100644
+--- a/internal/runtime/gate_mcp.go
++++ b/internal/runtime/gate_mcp.go
+@@ -36,6 +36,11 @@ func materializeGateMCP(workspace, configRoot, binaryRel, resultPath, driver str
+ 		return domain.MCPServerDefinition{}, fmt.Errorf("read gate MCP binary: %w", err)
+ 	}
+ 	binaryPath := filepath.Join(configRoot, "gate-mcp")
++	if targetOS == "windows" {
++		// Windows only executes files with an executable extension.
++		binaryPath += ".exe"
++		binaryRel += ".exe"
++	}
+ 	if err := writeManagedFile(workspace, binaryPath, raw, 0o700); err != nil {
+ 		return domain.MCPServerDefinition{}, err
+ 	}
+@@ -55,7 +60,7 @@ func materializeGateMCP(workspace, configRoot, binaryRel, resultPath, driver str
+ // cache the small helper on demand. A sidecar next to the current executable
+ // is also accepted so installed runner machines need no Go toolchain.
+ func resolveGateMCPBinary(targetOS, targetArch string) (string, error) {
+-	if targetOS != "darwin" && targetOS != "linux" {
++	if targetOS != "darwin" && targetOS != "linux" && targetOS != "windows" {
+ 		return "", fmt.Errorf("unsupported gate MCP operating system %q", targetOS)
+ 	}
+ 	if targetArch != "amd64" && targetArch != "arm64" {
+diff --git a/internal/runtime/git_isolation.go b/internal/runtime/git_isolation.go
+index b87faf1..cd5a8a4 100644
+--- a/internal/runtime/git_isolation.go
++++ b/internal/runtime/git_isolation.go
+@@ -12,10 +12,10 @@ import (
+ 	"strconv"
+ 	"strings"
+ 	"sync"
+-	"syscall"
+ 	"time"
+ 
+ 	"agentflow/internal/domain"
++	"agentflow/internal/osx"
+ )
+ 
+ const legacyProjectAgentGitExcludeBlock = `# AgentFlow managed sandbox: repository Agent configuration
+@@ -295,7 +295,7 @@ func gitIndexLockHeldUnder(procRoot, lockPath string, self uint32) (inUse, confi
+ 	if err != nil {
+ 		return false, false, err
+ 	}
+-	stat, ok := lock.Sys().(*syscall.Stat_t)
++	stat, ok := osx.Identity(lock)
+ 	if !lock.Mode().IsRegular() || !ok {
+ 		return false, false, fmt.Errorf("index lock %s is not a regular file", want)
+ 	}
+diff --git a/internal/runtime/process.go b/internal/runtime/process.go
+index a5c5365..241a1a4 100644
+--- a/internal/runtime/process.go
++++ b/internal/runtime/process.go
+@@ -2,6 +2,7 @@ package runtime
+ 
+ import (
+ 	"agentflow/internal/domain"
++	"agentflow/internal/osx"
+ 	"bytes"
+ 	"errors"
+ 	"fmt"
+@@ -45,8 +46,8 @@ func runCommand(cmd *exec.Cmd, sink EventSink) (string, error) {
+ 	if err != nil && cmd.Process == nil {
+ 		err = fmt.Errorf("%w: %w", errProcessNotStarted, err)
+ 	}
+-	if cmd.Process != nil && cmd.SysProcAttr != nil && cmd.SysProcAttr.Setpgid {
+-		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
++	if cmd.Process != nil && osx.HasProcessGroup(cmd) {
++		_ = osx.KillGroup(cmd.Process.Pid)
+ 	}
+ 	outputIncomplete := errors.Is(err, exec.ErrWaitDelay)
+ 	if errors.Is(err, exec.ErrWaitDelay) {
+diff --git a/internal/runtime/remote_sandbox.go b/internal/runtime/remote_sandbox.go
+index 4911e1c..1ee2494 100644
+--- a/internal/runtime/remote_sandbox.go
++++ b/internal/runtime/remote_sandbox.go
+@@ -18,6 +18,7 @@ func OpenRemoteSandbox(ctx context.Context, id, workspace string, profile domain
+ 		return nil, fmt.Errorf("runner sandbox workspace is required")
+ 	}
+ 	var err error
++	profile, resources.Dockerfile = isolateLocalDriver(profile, resources.Dockerfile)
+ 	if profile.Driver, err = domain.ResolveSandboxDriver(profile.Driver, goruntime.GOOS); err != nil {
+ 		return nil, err
+ 	}
+diff --git a/internal/runtime/sandbox_docker.go b/internal/runtime/sandbox_docker.go
+index 0540f44..ce0474c 100644
+--- a/internal/runtime/sandbox_docker.go
++++ b/internal/runtime/sandbox_docker.go
+@@ -102,6 +102,9 @@ func removeDockerContainer(ctx context.Context, name string) error {
+ // that only ever use the local driver. Cleanup runs per finished run and on a
+ // 20s sweep, so this is on a hot path.
+ var dockerAvailable = sync.OnceValue(func() bool {
++	if desktopHostRuntime() {
++		return false
++	}
+ 	_, err := exec.LookPath("docker")
+ 	return err == nil
+ })
+@@ -123,7 +126,9 @@ func DockerReady() bool {
+ 	ok := false
+ 	if dockerAvailable() {
+ 		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+-		ok = exec.CommandContext(ctx, "docker", "version", "--format", "{{.Server.Version}}").Run() == nil
++		cmd := exec.CommandContext(ctx, "docker", "version", "--format", "{{.Server.Version}}")
++		hideCommandWindow(cmd)
++		ok = cmd.Run() == nil
+ 		cancel()
+ 	}
+ 	dockerReady.checked, dockerReady.ok = time.Now(), ok
+@@ -707,7 +712,7 @@ func (s *dockerSandbox) start(ctx context.Context, recreate bool) error {
+ 	// Native installs own private (0700) workspaces as the service user.
+ 	// A root image without DAC capabilities cannot access another UID's bind.
+ 	// Run default/root images as that user; retain explicit non-root image users.
+-	if os.Geteuid() != 0 {
++	if os.Geteuid() > 0 { // -1 on Windows: Docker Desktop maps bind ownership itself
+ 		configured, err := exec.CommandContext(ctx, "docker", "image", "inspect", "--format", "{{.Config.User}}", image).CombinedOutput()
+ 		if err != nil {
+ 			return fmt.Errorf("inspect sandbox image user: %w: %s", err, strings.TrimSpace(string(configured)))
+@@ -925,11 +930,34 @@ func PrebuildIsolatedImage() {
+ 	}()
+ }
+ 
+-// isolateLocalDriver runs "local" profiles in Docker when
+-// AGENTFLOW_LOCAL_SANDBOX=docker, so no SOP command executes inside a platform
+-// container that can reach the host Docker daemon.
++// desktopHostRuntime is set by the LoopForge desktop shell: every sandbox
++// runs on the host (SQLite, no Docker). Docker/native/bwrap/seatbelt profiles
++// are rewritten to the local driver so the shipped product never starts a container.
++// DesktopHostRuntime reports whether this process must run without Docker
++// (LoopForge desktop shell or AGENTFLOW_DISABLE_DOCKER=1).
++func DesktopHostRuntime() bool { return desktopHostRuntime() }
++
++func desktopHostRuntime() bool {
++	v := strings.TrimSpace(os.Getenv("LOOPFORGE_DESKTOP"))
++	if v == "1" || strings.EqualFold(v, "true") {
++		return true
++	}
++	v = strings.TrimSpace(os.Getenv("AGENTFLOW_DISABLE_DOCKER"))
++	return v == "1" || strings.EqualFold(v, "true")
++}
++
++// isolateLocalDriver remaps sandbox drivers for the current deployment.
++// On the desktop build, all isolation drivers become "local". In Compose,
++// AGENTFLOW_LOCAL_SANDBOX=docker still wraps bare "local" profiles in Docker.
+ func isolateLocalDriver(profile domain.SandboxProfile, dockerfile domain.DockerfileDefinition) (domain.SandboxProfile, domain.DockerfileDefinition) {
+ 	driver := strings.TrimSpace(profile.Driver)
++	if desktopHostRuntime() {
++		switch driver {
++		case "docker", "native", "bwrap", "seatbelt":
++			profile.Driver = "local"
++		}
++		return profile, dockerfile
++	}
+ 	if (driver != "" && driver != "local") || strings.TrimSpace(os.Getenv("AGENTFLOW_LOCAL_SANDBOX")) != "docker" {
+ 		return profile, dockerfile
+ 	}
+diff --git a/internal/runtime/sandbox_local.go b/internal/runtime/sandbox_local.go
+index b81a20c..8f59b4c 100644
+--- a/internal/runtime/sandbox_local.go
++++ b/internal/runtime/sandbox_local.go
+@@ -1,12 +1,12 @@
+ package runtime
+ 
+ import (
++	"agentflow/internal/osx"
+ 	"context"
+ 	"fmt"
+ 	"os"
+ 	"os/exec"
+ 	"path/filepath"
+-	"syscall"
+ )
+ 
+ type localSandbox struct {
+@@ -58,12 +58,12 @@ func (s *localSandbox) command(ctx context.Context, command CommandSpec, base []
+ 		cmd.Env = upsertEnv(cmd.Env, "PWD", command.WorkingDir)
+ 	}
+ 	if command.OwnProcessGroup {
+-		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
++		osx.SetProcessGroup(cmd)
+ 		cmd.Cancel = func() error {
+ 			if cmd.Process == nil {
+ 				return nil
+ 			}
+-			return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
++			return osx.KillGroup(cmd.Process.Pid)
+ 		}
+ 	}
+ 	return cmd, nil
+diff --git a/internal/runtime/sandbox_manager.go b/internal/runtime/sandbox_manager.go
+index 64cfff9..cd52e1e 100644
+--- a/internal/runtime/sandbox_manager.go
++++ b/internal/runtime/sandbox_manager.go
+@@ -79,6 +79,7 @@ func (m *Manager) open(ctx context.Context, id, dir string, profile domain.Sandb
+ 		_ = unlockFile(lock)
+ 		return nil, err
+ 	}
++	profile, resources.Dockerfile = isolateLocalDriver(profile, resources.Dockerfile)
+ 	if profile.Driver, err = domain.ResolveSandboxDriver(profile.Driver, goruntime.GOOS); err != nil {
+ 		return fail(err)
+ 	}
+@@ -96,7 +97,6 @@ func (m *Manager) open(ctx context.Context, id, dir string, profile domain.Sandb
+ 		return fail(err)
+ 	}
+ 	profile.Environment = overlayEnvironment(profile.Environment, activated.Overlay)
+-	profile, resources.Dockerfile = isolateLocalDriver(profile, resources.Dockerfile)
+ 	sandbox, err := createDriverSandbox(ctx, "sandbox", id, workspace, profile, requirements, resources.Dockerfile)
+ 	if err != nil {
+ 		return fail(err)
+diff --git a/internal/runtime/sandbox_process.go b/internal/runtime/sandbox_process.go
+index 1b50c4f..7ca04f2 100644
+--- a/internal/runtime/sandbox_process.go
++++ b/internal/runtime/sandbox_process.go
+@@ -13,9 +13,9 @@ import (
+ 	"sort"
+ 	"strconv"
+ 	"strings"
+-	"syscall"
+ 
+ 	"agentflow/internal/domain"
++	"agentflow/internal/osx"
+ )
+ 
+ func appendEnvironment(base []string, overlays ...map[string]string) []string {
+@@ -174,12 +174,12 @@ func (s *processSandbox) command(ctx context.Context, command CommandSpec, base
+ 	if command.OwnProcessGroup {
+ 		// A conversation CLI is stopped with its whole process group; bwrap's
+ 		// own PID namespace then takes every descendant down with it.
+-		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
++		osx.SetProcessGroup(cmd)
+ 		cmd.Cancel = func() error {
+ 			if cmd.Process == nil {
+ 				return nil
+ 			}
+-			return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
++			return osx.KillGroup(cmd.Process.Pid)
+ 		}
+ 	}
+ 	switch s.driver {
+diff --git a/internal/runtime/workspace_lock.go b/internal/runtime/workspace_lock.go
+index c82dae1..92d62b0 100644
+--- a/internal/runtime/workspace_lock.go
++++ b/internal/runtime/workspace_lock.go
+@@ -1,10 +1,10 @@
+ package runtime
+ 
+ import (
++	"agentflow/internal/osx"
+ 	"context"
+ 	"os"
+ 	"path/filepath"
+-	"syscall"
+ 	"time"
+ )
+ 
+@@ -31,11 +31,11 @@ func (m *Manager) acquireLock(ctx context.Context, id string) (*os.File, error)
+ 
+ func flockExclusive(ctx context.Context, f *os.File) error {
+ 	for {
+-		err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
++		err := osx.TryLock(f)
+ 		if err == nil {
+ 			return nil
+ 		}
+-		if err != syscall.EWOULDBLOCK && err != syscall.EAGAIN {
++		if err != osx.ErrLocked {
+ 			return err
+ 		}
+ 		select {
+@@ -50,7 +50,7 @@ func unlockFile(f *os.File) error {
+ 	if f == nil {
+ 		return nil
+ 	}
+-	_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
++	_ = osx.Unlock(f)
+ 	return f.Close()
+ }
+ 
+@@ -64,10 +64,10 @@ func (m *Manager) workspaceInUse(name string) bool {
+ 		return false
+ 	}
+ 	defer f.Close()
+-	err = syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
++	err = osx.TryLock(f)
+ 	if err != nil {
+ 		return true
+ 	}
+-	_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
++	_ = osx.Unlock(f)
+ 	return false
+ }
+diff --git a/internal/runtime/workspace_terminal.go b/internal/runtime/workspace_terminal.go
+index 5670a61..78e6931 100644
+--- a/internal/runtime/workspace_terminal.go
++++ b/internal/runtime/workspace_terminal.go
+@@ -9,12 +9,12 @@ import (
+ 	"os/exec"
+ 	"strings"
+ 	"sync"
+-	"syscall"
+ 	"time"
+ 
+ 	"agentflow/internal/domain"
++	"agentflow/internal/osx"
++
+ 	"github.com/creack/pty"
+-	"golang.org/x/sys/unix"
+ )
+ 
+ // TerminalPool owns transient PTYs on the machine that owns the workspace.
+@@ -248,15 +248,15 @@ func terminalSize(req domain.WorkspaceTerminalRequest) *pty.Winsize {
+ }
+ func (s *workspaceTerminal) stop() {
+ 	s.once.Do(func() {
+-		fg, _ := unix.IoctlGetInt(int(s.file.Fd()), unix.TIOCGPGRP)
++		fg := terminalForegroundGroup(s.file)
+ 		// Closing the controlling PTY also hangs up the foreground process group.
+-		syscall.Kill(-s.cmd.Process.Pid, syscall.SIGHUP)
++		osx.HangupGroup(s.cmd.Process.Pid)
+ 		s.file.Close()
+ 		time.Sleep(100 * time.Millisecond)
+ 		if fg > 0 {
+-			syscall.Kill(-fg, syscall.SIGKILL)
++			osx.KillGroup(fg)
+ 		}
+-		syscall.Kill(-s.cmd.Process.Pid, syscall.SIGKILL)
++		osx.KillGroup(s.cmd.Process.Pid)
+ 		if s.release != nil {
+ 			s.release()
+ 		}
+diff --git a/internal/runtime/workspace_terminal_sandbox.go b/internal/runtime/workspace_terminal_sandbox.go
+index c6645b5..fdac9e3 100644
+--- a/internal/runtime/workspace_terminal_sandbox.go
++++ b/internal/runtime/workspace_terminal_sandbox.go
+@@ -1,6 +1,7 @@
+ package runtime
+ 
+ import (
++	"agentflow/internal/osx"
+ 	"context"
+ 	"crypto/rand"
+ 	"crypto/sha256"
+@@ -12,7 +13,6 @@ import (
+ 	"path/filepath"
+ 	"strings"
+ 	"sync"
+-	"syscall"
+ 	"time"
+ )
+ 
+@@ -210,7 +210,7 @@ func filesystemEnvironmentIdentity(workspace, driver string, environment map[str
+ 	if err != nil {
+ 		return "", err
+ 	}
+-	stat, ok := info.Sys().(*syscall.Stat_t)
++	stat, ok := osx.Identity(info)
+ 	if !ok {
+ 		return "", fmt.Errorf("workspace filesystem identity unavailable")
+ 	}
+@@ -221,7 +221,7 @@ func filesystemEnvironmentIdentity(workspace, driver string, environment map[str
+ 		Inode        uint64
+ 		Environment  map[string]string
+ 		ProcessEpoch string
+-	}{driver, filepath.Clean(workspace), uint64(stat.Dev), stat.Ino, environment, terminalProcessEnvironmentEpoch()})
++	}{driver, filepath.Clean(workspace), stat.Dev, stat.Ino, environment, terminalProcessEnvironmentEpoch()})
+ 	if err != nil {
+ 		return "", err
+ 	}
+diff --git a/internal/osx/osx.go b/internal/osx/osx.go
+new file mode 100644
+index 0000000..c246973
+--- /dev/null
++++ b/internal/osx/osx.go
+@@ -0,0 +1,17 @@
++// Package osx holds the small set of process, file-lock and file-identity
++// primitives that differ between Unix and Windows, so the rest of the code
++// base can build for the LoopForge desktop (Windows) package unchanged.
++package osx
++
++import "errors"
++
++// ErrLocked reports that a non-blocking exclusive lock is held elsewhere.
++var ErrLocked = errors.New("file is locked by another process")
++
++// FileID is the portable subset of a stat result.
++type FileID struct {
++	Dev   uint64
++	Ino   uint64
++	Uid   uint32
++	Nlink uint64
++}
+diff --git a/internal/osx/osx_unix.go b/internal/osx/osx_unix.go
+new file mode 100644
+index 0000000..69f296f
+--- /dev/null
++++ b/internal/osx/osx_unix.go
+@@ -0,0 +1,62 @@
++//go:build !windows
++
++package osx
++
++import (
++	"errors"
++	"os"
++	"os/exec"
++	"syscall"
++)
++
++// SetProcessGroup starts cmd in its own process group.
++func SetProcessGroup(cmd *exec.Cmd) {
++	if cmd.SysProcAttr == nil {
++		cmd.SysProcAttr = &syscall.SysProcAttr{}
++	}
++	cmd.SysProcAttr.Setpgid = true
++}
++
++// HasProcessGroup reports whether SetProcessGroup was applied to cmd.
++func HasProcessGroup(cmd *exec.Cmd) bool {
++	return cmd.SysProcAttr != nil && cmd.SysProcAttr.Setpgid
++}
++
++// KillGroup force-kills the process group led by pid.
++func KillGroup(pid int) error { return syscall.Kill(-pid, syscall.SIGKILL) }
++
++// TerminateGroup asks the process group led by pid to exit.
++func TerminateGroup(pid int) error { return syscall.Kill(-pid, syscall.SIGTERM) }
++
++// HangupGroup sends SIGHUP to the process group led by pid.
++func HangupGroup(pid int) error { return syscall.Kill(-pid, syscall.SIGHUP) }
++
++// Alive reports whether pid names a live process (EPERM counts as alive).
++func Alive(pid int) bool {
++	err := syscall.Kill(pid, 0)
++	return err == nil || errors.Is(err, syscall.EPERM)
++}
++
++// Signalable reports whether this process may signal pid.
++func Signalable(pid int) bool { return syscall.Kill(pid, 0) == nil }
++
++// TryLock takes a non-blocking exclusive lock; ErrLocked when held elsewhere.
++func TryLock(f *os.File) error {
++	err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
++	if err == syscall.EWOULDBLOCK || err == syscall.EAGAIN {
++		return ErrLocked
++	}
++	return err
++}
++
++// Unlock releases a lock taken by TryLock.
++func Unlock(f *os.File) error { return syscall.Flock(int(f.Fd()), syscall.LOCK_UN) }
++
++// Identity returns the device/inode/owner/link-count of info.
++func Identity(info os.FileInfo) (FileID, bool) {
++	st, ok := info.Sys().(*syscall.Stat_t)
++	if !ok {
++		return FileID{}, false
++	}
++	return FileID{Dev: uint64(st.Dev), Ino: uint64(st.Ino), Uid: st.Uid, Nlink: uint64(st.Nlink)}, true
++}
 diff --git a/internal/osx/osx_windows.go b/internal/osx/osx_windows.go
 new file mode 100644
 index 0000000..58b6310
@@ -101,20 +808,264 @@ index 0000000..58b6310
 +	}
 +	return FileID{Dev: 1, Ino: h.Sum64(), Uid: 0, Nlink: 1}, true
 +}
-diff --git a/internal/runner/daemon.go b/internal/runner/daemon.go
-index c4ea0e8..2db15b8 100644
---- a/internal/runner/daemon.go
-+++ b/internal/runner/daemon.go
-@@ -623,6 +623,9 @@ func (d *Daemon) executeRunCleanup(ctx context.Context, task domain.RunnerTask)
- }
- 
- func cleanupDockerWorkspace(ctx context.Context, workspace string) error {
-+	if runtime.DesktopHostRuntime() {
-+		return nil
+diff --git a/internal/repo/sqlite_desktop.go b/internal/repo/sqlite_desktop.go
+new file mode 100644
+index 0000000..7092804
+--- /dev/null
++++ b/internal/repo/sqlite_desktop.go
+@@ -0,0 +1,203 @@
++package repo
++
++// Desktop (single-user, single-process) storage: a SQLite file instead of
++// MySQL. Selected with a DSN of the form "sqlite:<path>" or by setting
++// AGENTFLOW_SQLITE_PATH. It reuses the exact gorm code paths the test suite
++// exercises against sqlite, and applies the public starter catalog from
++// migrations/seed on first creation (the operator step MySQL installs run).
++
++import (
++	"errors"
++	"fmt"
++	"os"
++	"path/filepath"
++	"strings"
++	"time"
++
++	"agentflow/migrations"
++
++	"github.com/glebarez/sqlite"
++	"gorm.io/gorm"
++	"gorm.io/gorm/logger"
++)
++
++// sqlitePathFromDSN returns the database path when dsn selects SQLite.
++func sqlitePathFromDSN(dsn string) (string, bool) {
++	if p, ok := strings.CutPrefix(dsn, "sqlite:"); ok {
++		return strings.TrimSpace(p), true
 +	}
- 	if _, err := exec.LookPath("docker"); err != nil {
- 		return nil
- 	}
++	if dsn == "" {
++		if p := strings.TrimSpace(os.Getenv("AGENTFLOW_SQLITE_PATH")); p != "" {
++			return p, true
++		}
++	}
++	return "", false
++}
++
++func openSQLite(path string) (*Store, error) {
++	if path == "" {
++		return nil, errors.New("sqlite path is empty")
++	}
++	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
++		return nil, fmt.Errorf("sqlite dir: %w", err)
++	}
++	_, statErr := os.Stat(path)
++	fresh := errors.Is(statErr, os.ErrNotExist)
++	dsn := filepath.ToSlash(path) + "?_pragma=busy_timeout(15000)&_pragma=journal_mode(WAL)&_pragma=synchronous(NORMAL)"
++	db, err := gorm.Open(sqlite.Open(dsn), &gorm.Config{TranslateError: true, Logger: logger.Default.LogMode(logger.Silent)})
++	if err != nil {
++		return nil, fmt.Errorf("sqlite open: %w", err)
++	}
++	if sqlDB, err := db.DB(); err == nil {
++		// One writer connection, same as the test suite: SQLite serializes
++		// writers anyway and this avoids SQLITE_BUSY between pool members.
++		sqlDB.SetMaxOpenConns(1)
++		sqlDB.SetConnMaxLifetime(0)
++	}
++	s := newStore(db)
++	if err := db.AutoMigrate(allModels()...); err != nil {
++		s.Close()
++		return nil, fmt.Errorf("sqlite automigrate: %w", err)
++	}
++	if fresh || os.Getenv("AGENTFLOW_SQLITE_RESEED") == "1" {
++		if err := seedSQLiteCatalog(db); err != nil {
++			s.Close()
++			return nil, fmt.Errorf("sqlite seed: %w", err)
++		}
++	}
++	// Desktop builds always collapse leftover docker sandbox rows, including
++	// databases created before this remap existed.
++	if os.Getenv("LOOPFORGE_DESKTOP") == "1" || os.Getenv("AGENTFLOW_DISABLE_DOCKER") == "1" {
++		if err := remapDockerSandboxesToLocal(db); err != nil {
++			s.Close()
++			return nil, fmt.Errorf("sqlite remap sandboxes: %w", err)
++		}
++	}
++	return s, nil
++}
++
++// seedSQLiteCatalog applies migrations/seed/001 (converted from MySQL) and the
++// ownerless form of the welcome project from 002.
++func seedSQLiteCatalog(db *gorm.DB) error {
++	raw, err := migrations.Seed.ReadFile("seed/001_public_catalog.sql")
++	if err != nil {
++		return err
++	}
++	stmts := mysqlSeedToSQLite(string(raw))
++	return db.Transaction(func(tx *gorm.DB) error {
++		for _, stmt := range stmts {
++			if err := tx.Exec(stmt).Error; err != nil {
++				head := stmt
++				if len(head) > 120 {
++					head = head[:120]
++				}
++				return fmt.Errorf("%w: %s", err, head)
++			}
++		}
++		now := time.Now().UTC()
++		payload := `{"id": "welcome", "key": "LOOP", "name": "LoopForge 体验项目", "description": "从创建需求、选择 SOP 到查看运行与审批，体验完整交付流程。", "color": "#3867f4", "workflowId": "welcome-workflow", "clarification": {"enabled": false}, "createdAt": "2026-10-15T00:00:00Z", "updatedAt": "2026-10-15T00:00:00Z", "ownerId": 0, "members": []}`
++		if err := tx.Exec("INSERT OR IGNORE INTO projects (id,project_key,name,owner_user_id,payload,created_at,updated_at) VALUES ('welcome','LOOP','LoopForge 体验项目',NULL,?,?,?)", payload, now, now).Error; err != nil {
++			return err
++		}
++		return remapDockerSandboxesToLocal(tx)
++	})
++}
++
++// remapDockerSandboxesToLocal rewrites catalog docker sandboxes to the local
++// driver so a desktop install never offers or starts a container runtime.
++func remapDockerSandboxesToLocal(tx *gorm.DB) error {
++	return tx.Exec(`UPDATE sandboxes
++		SET name = CASE
++			WHEN name LIKE '%本机%' THEN name
++			ELSE '本机执行（桌面版）'
++		END,
++		payload = json_set(payload, '$.driver', 'local', '$.name', '本机执行（桌面版）', '$.dockerfileId', NULL)
++		WHERE json_extract(payload, '$.driver') = 'docker'`).Error
++}
++
++// mysqlSeedToSQLite splits a MySQL seed script into statements and rewrites
++// the MySQL-only parts: INSERT IGNORE, backslash escapes inside '...' strings,
++// SET NAMES and explicit transaction statements (the caller wraps one).
++func mysqlSeedToSQLite(src string) []string {
++	var out []string
++	var b strings.Builder
++	inStr, inLineComment := false, false
++	for i := 0; i < len(src); i++ {
++		c := src[i]
++		if inLineComment {
++			if c == '\n' {
++				inLineComment = false
++				b.WriteByte(c)
++			}
++			continue
++		}
++		if inStr {
++			switch {
++			case c == '\\' && i+1 < len(src):
++				i++
++				switch n := src[i]; n {
++				case 'n':
++					b.WriteByte('\n')
++				case 't':
++					b.WriteByte('\t')
++				case 'r':
++					b.WriteByte('\r')
++				case '0':
++					b.WriteByte(0)
++				case '\'':
++					b.WriteString("''")
++				default: // \\ \" \% \_ and others: the literal character
++					b.WriteByte(n)
++				}
++			case c == '\'' && i+1 < len(src) && src[i+1] == '\'':
++				b.WriteString("''")
++				i++
++			case c == '\'':
++				inStr = false
++				b.WriteByte(c)
++			default:
++				b.WriteByte(c)
++			}
++			continue
++		}
++		if strings.HasPrefix(src[i:], "UTC_TIMESTAMP()") {
++			b.WriteString("strftime('%Y-%m-%d %H:%M:%f+00:00','now')")
++			i += len("UTC_TIMESTAMP()") - 1
++			continue
++		}
++		switch {
++		case c == '\'':
++			inStr = true
++			b.WriteByte(c)
++		case c == '-' && i+1 < len(src) && src[i+1] == '-':
++			inLineComment = true
++		case c == ';':
++			if stmt := normalizeSeedStatement(b.String()); stmt != "" {
++				out = append(out, stmt)
++			}
++			b.Reset()
++		default:
++			b.WriteByte(c)
++		}
++	}
++	if stmt := normalizeSeedStatement(b.String()); stmt != "" {
++		out = append(out, stmt)
++	}
++	return out
++}
++
++func normalizeSeedStatement(stmt string) string {
++	stmt = strings.TrimSpace(stmt)
++	upper := strings.ToUpper(stmt)
++	switch {
++	case stmt == "",
++		strings.HasPrefix(upper, "SET NAMES"),
++		strings.HasPrefix(upper, "START TRANSACTION"),
++		strings.HasPrefix(upper, "BEGIN"),
++		strings.HasPrefix(upper, "COMMIT"):
++		return ""
++	case strings.HasPrefix(upper, "INSERT IGNORE"):
++		return "INSERT OR IGNORE" + stmt[len("INSERT IGNORE"):]
++	}
++	return stmt
++}
+diff --git a/internal/repo/sqlite_desktop_test.go b/internal/repo/sqlite_desktop_test.go
+new file mode 100644
+index 0000000..72f35a2
+--- /dev/null
++++ b/internal/repo/sqlite_desktop_test.go
+@@ -0,0 +1,43 @@
++package repo
++
++import (
++	"path/filepath"
++	"strings"
++	"testing"
++)
++
++func TestOpenSQLiteSeedsStarterCatalog(t *testing.T) {
++	path := filepath.Join(t.TempDir(), "db", "loopforge.db")
++	s, err := Open("sqlite:" + path)
++	if err != nil {
++		t.Fatal(err)
++	}
++	if got := s.StorageInfo()["driver"]; got != "sqlite" {
++		t.Fatalf("driver = %v", got)
++	}
++	if _, ok := s.Project("welcome"); !ok {
++		t.Fatal("welcome project missing")
++	}
++	d, ok := s.Dockerfile("generic-backend")
++	if !ok || !strings.Contains(d.Content, "\nRUN apt-get") {
++		t.Fatalf("generic-backend dockerfile escapes not converted: %q", d.Content)
++	}
++	sb, ok := s.Sandbox("generic-docker")
++	if !ok || sb.Driver != "local" {
++		t.Fatalf("desktop seed should remap docker sandbox to local, got %+v ok=%v", sb, ok)
++	}
++	s.Close()
++	// Reopening an existing database must not fail or reseed.
++	s, err = Open("sqlite:" + path)
++	if err != nil {
++		t.Fatal(err)
++	}
++	s.Close()
++}
++
++func TestMySQLSeedToSQLite(t *testing.T) {
++	got := mysqlSeedToSQLite("SET NAMES utf8mb4;\nSTART TRANSACTION;\n-- c;\nINSERT IGNORE INTO t (a,b) VALUES ('x\\\\ny; it\\'s',UTC_TIMESTAMP());\nCOMMIT;")
++	if len(got) != 1 || !strings.HasPrefix(got[0], "INSERT OR IGNORE INTO t") || !strings.Contains(got[0], `'x\ny; it''s'`) || strings.Contains(got[0], "UTC_TIMESTAMP") {
++		t.Fatalf("%q", got)
++	}
++}
 diff --git a/internal/runtime/hidewindow_other.go b/internal/runtime/hidewindow_other.go
 new file mode 100644
 index 0000000..9b30e5a
@@ -157,78 +1108,6 @@ index 0000000..47219dc
 +	cmd.SysProcAttr.HideWindow = true
 +	cmd.SysProcAttr.CreationFlags |= windows.CREATE_NO_WINDOW
 +}
-diff --git a/internal/runtime/sandbox_docker.go b/internal/runtime/sandbox_docker.go
-index 0540f44..ce0474c 100644
---- a/internal/runtime/sandbox_docker.go
-+++ b/internal/runtime/sandbox_docker.go
-@@ -102,6 +102,9 @@ func removeDockerContainer(ctx context.Context, name string) error {
- // that only ever use the local driver. Cleanup runs per finished run and on a
- // 20s sweep, so this is on a hot path.
- var dockerAvailable = sync.OnceValue(func() bool {
-+	if desktopHostRuntime() {
-+		return false
-+	}
- 	_, err := exec.LookPath("docker")
- 	return err == nil
- })
-@@ -123,7 +126,9 @@ func DockerReady() bool {
- 	ok := false
- 	if dockerAvailable() {
- 		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
--		ok = exec.CommandContext(ctx, "docker", "version", "--format", "{{.Server.Version}}").Run() == nil
-+		cmd := exec.CommandContext(ctx, "docker", "version", "--format", "{{.Server.Version}}")
-+		hideCommandWindow(cmd)
-+		ok = cmd.Run() == nil
- 		cancel()
- 	}
- 	dockerReady.checked, dockerReady.ok = time.Now(), ok
-@@ -707,7 +712,7 @@ func (s *dockerSandbox) start(ctx context.Context, recreate bool) error {
- 	// Native installs own private (0700) workspaces as the service user.
- 	// A root image without DAC capabilities cannot access another UID's bind.
- 	// Run default/root images as that user; retain explicit non-root image users.
--	if os.Geteuid() != 0 {
-+	if os.Geteuid() > 0 { // -1 on Windows: Docker Desktop maps bind ownership itself
- 		configured, err := exec.CommandContext(ctx, "docker", "image", "inspect", "--format", "{{.Config.User}}", image).CombinedOutput()
- 		if err != nil {
- 			return fmt.Errorf("inspect sandbox image user: %w: %s", err, strings.TrimSpace(string(configured)))
-@@ -925,11 +930,34 @@ func PrebuildIsolatedImage() {
- 	}()
- }
- 
--// isolateLocalDriver runs "local" profiles in Docker when
--// AGENTFLOW_LOCAL_SANDBOX=docker, so no SOP command executes inside a platform
--// container that can reach the host Docker daemon.
-+// desktopHostRuntime is set by the LoopForge desktop shell: every sandbox
-+// runs on the host (SQLite, no Docker). Docker/native/bwrap/seatbelt profiles
-+// are rewritten to the local driver so the shipped product never starts a container.
-+// DesktopHostRuntime reports whether this process must run without Docker
-+// (LoopForge desktop shell or AGENTFLOW_DISABLE_DOCKER=1).
-+func DesktopHostRuntime() bool { return desktopHostRuntime() }
-+
-+func desktopHostRuntime() bool {
-+	v := strings.TrimSpace(os.Getenv("LOOPFORGE_DESKTOP"))
-+	if v == "1" || strings.EqualFold(v, "true") {
-+		return true
-+	}
-+	v = strings.TrimSpace(os.Getenv("AGENTFLOW_DISABLE_DOCKER"))
-+	return v == "1" || strings.EqualFold(v, "true")
-+}
-+
-+// isolateLocalDriver remaps sandbox drivers for the current deployment.
-+// On the desktop build, all isolation drivers become "local". In Compose,
-+// AGENTFLOW_LOCAL_SANDBOX=docker still wraps bare "local" profiles in Docker.
- func isolateLocalDriver(profile domain.SandboxProfile, dockerfile domain.DockerfileDefinition) (domain.SandboxProfile, domain.DockerfileDefinition) {
- 	driver := strings.TrimSpace(profile.Driver)
-+	if desktopHostRuntime() {
-+		switch driver {
-+		case "docker", "native", "bwrap", "seatbelt":
-+			profile.Driver = "local"
-+		}
-+		return profile, dockerfile
-+	}
- 	if (driver != "" && driver != "local") || strings.TrimSpace(os.Getenv("AGENTFLOW_LOCAL_SANDBOX")) != "docker" {
- 		return profile, dockerfile
- 	}
 diff --git a/internal/runtime/sandbox_docker_desktop_test.go b/internal/runtime/sandbox_docker_desktop_test.go
 new file mode 100644
 index 0000000..423de2a
@@ -270,3 +1149,79 @@ index 0000000..423de2a
 +		}
 +	}
 +}
+diff --git a/internal/runtime/terminal_fg_unix.go b/internal/runtime/terminal_fg_unix.go
+new file mode 100644
+index 0000000..4b09c66
+--- /dev/null
++++ b/internal/runtime/terminal_fg_unix.go
+@@ -0,0 +1,14 @@
++//go:build !windows
++
++package runtime
++
++import (
++	"os"
++
++	"golang.org/x/sys/unix"
++)
++
++func terminalForegroundGroup(f *os.File) int {
++	fg, _ := unix.IoctlGetInt(int(f.Fd()), unix.TIOCGPGRP)
++	return fg
++}
+diff --git a/internal/runtime/terminal_fg_windows.go b/internal/runtime/terminal_fg_windows.go
+new file mode 100644
+index 0000000..18599a2
+--- /dev/null
++++ b/internal/runtime/terminal_fg_windows.go
+@@ -0,0 +1,7 @@
++//go:build windows
++
++package runtime
++
++import "os"
++
++func terminalForegroundGroup(*os.File) int { return 0 }
+diff --git a/migrations/embed.go b/migrations/embed.go
+new file mode 100644
+index 0000000..e066947
+--- /dev/null
++++ b/migrations/embed.go
+@@ -0,0 +1,8 @@
++// Package migrations embeds the opt-in starter catalog so the desktop
++// (SQLite) build can apply it on first start without an operator step.
++package migrations
++
++import "embed"
++
++//go:embed seed/*.sql
++var Seed embed.FS
+diff --git a/cmd/agentflow/main.go b/cmd/agentflow/main.go
+--- a/cmd/agentflow/main.go
++++ b/cmd/agentflow/main.go
+@@ -1,6 +1,7 @@
+ package main
+ 
+ import (
++	"bufio"
+ 	"context"
+ 	"flag"
+ 	"fmt"
+@@ -259,6 +260,17 @@
+ 		if role != "worker" {
+ 			signal.Notify(sig, syscall.SIGHUP)
+ 		}
++		// Private parent-owned stdin pipe: headless Windows services cannot receive
++		// a Unix SIGTERM. Reuse the normal drain path; EOF also handles parent death.
++		if os.Getenv("LOOPFORGE_DESKTOP") == "1" && os.Getenv("LOOPFORGE_DESKTOP_STDIN_CONTROL") == "1" {
++			go func() {
++				scanner := bufio.NewScanner(os.Stdin)
++				for scanner.Scan() {
++					if scanner.Text() == "shutdown" { break }
++				}
++				sig <- os.Interrupt
++			}()
++		}
+ 	wait:
+ 		for received := range sig {
+ 			if received != syscall.SIGHUP {

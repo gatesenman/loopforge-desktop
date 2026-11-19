@@ -1,78 +1,91 @@
-# Packaging LoopForge Desktop
+# Reproducible Windows packaging
 
-English notes for maintainers. End-user docs live in the root README files.
+Electron 33.4.11 + electron-builder 25.1.8 + Go sidecar. Runtime archives,
+source checkout, node_modules, build outputs and executables are gitignored.
 
-## Layout
+## Clean builds
 
-- Electron 33 shell in `src/`. The Go sidecar (`agentflow.exe`) and helper bins are copied from a pinned LoopForge commit plus `patches/0001-desktop-no-docker-hide-console.patch`.
-- Runtimes (Git / Node / Python) are **not** stored in Git. They are fetched from `scripts/vendor-lock.json` into `vendor-dl/` (gitignored) and packed as `extraResources`.
-- The Windows NSIS installer is a single x64 `.exe`. Docker is not bundled, probed, or documented as a requirement.
+Use Node 22.23.5 and Go **1.27.3**, then:
 
-## Reproducible vendor fetch
-
-```bash
-node scripts/fetch-vendors.js          # download + sha256-verify into vendor-dl/
-node scripts/fetch-vendors.js --force  # re-extract even if dest already exists
-```
-
-Pinned today:
-
-| Runtime | Bundle | Version |
-| --- | --- | --- |
-| Git | Official **MinGit-busybox** 64-bit zip (not full PortableGit) | 2.56.1.windows.1 |
-| Node.js | Official Windows x64 zip | 22.23.5 |
-| Python | Official embeddable amd64 zip (`import site` enabled) | 3.11.9 |
-
-**Why MinGit-busybox, not plain MinGit?** LoopForge SOP script nodes run as `sh -lc`, git SSH helpers call `sh -c`, and some on-demand CLI installers run `bash -c`. Plain MinGit only has `git.exe`. MinGit-busybox is the smallest official Git for Windows bundle that still provides a POSIX shell (~84 MB unpacked vs ~323 MB for PortableGit). After extract, `fetch-vendors.js` adds:
-
-- `ucrt64/bin/sh.exe` — copy of the official `git-wrapper.exe` / `ash.exe` (argv0 selects busybox `sh`)
-- `ucrt64/bin/bash.exe` — copy of `busybox.exe` (argv0 selects the bash applet). Do **not** copy the wrapper as `bash.exe` (it re-execs itself).
-
-BusyBox is not full GNU bash/coreutils. Unusual SOP scripts that need perl, git-gui, or bash arrays may fail; that is an accepted trade-off of the slim runtime.
-
-## LoopForge Windows binaries
-
-```bash
-# Uses LOOPFORGE_SRC if set, else a local clone, else clones the pinned commit.
-node scripts/build-loopforge-bins.js
-```
-
-Only these files are packaged:
-
-- `agentflow.exe`
-- `agentflow-mcp.exe`
-- `agentflow-runner-windows-amd64`
-- `agentflow-gate-mcp-windows-amd64`
-
-Linux `*-linux-*` binaries and `loopforge-account.exe` are deleted and also filtered out of `extraResources`. The first admin account is created in the app; the legacy account CLI is not shipped.
-
-Hashes in `vendor-lock.json` describe the pre-built set used for a given desktop release. Fresh `go build` output is not bit-reproducible; CI builds from the pinned commit + patch and skips hash comparison (`--skip-hash-verify`).
-
-## Build the installer
-
-```bash
+```sh
 npm ci
+npm run fetch-vendors
+npm run build-bins
+npm test
+# On real Windows:
+npm run smoke:windows
 npm run dist
 ```
 
-Output:
+`dist` always uses `--publish never`. No release is created by CI.
+`LOOPFORGE_SRC` can identify an existing clone solely as a source of git
+objects: the build script archives the exact pinned revision, never its dirty
+working tree. Otherwise it fetches that revision into its own cache.
+A fresh isolated repository receives the complete SHA256-verified desktop
+patch (SQLite migrations, no-container path, Windows compile helpers, hidden
+console execution, stdin graceful shutdown). Patch failure is fatal.
+The chatbot is built using upstream `npm ci` and Vite **before Go embedding**.
+All four binaries are always rebuilt, with trimpath, buildvcs=false and no
+buildid. `resources/bin/build-manifest.json` records source commit, patch hash,
+Go/Node versions, frontend npm lock hash, binary sizes and SHA256 values.
+Old prebuilt binary hashes are not treated as reproducible source pins.
+Cross-host byte-identical binary hashes are not promised (frontend platform
+output can vary); provenance and native runtime smoke tests are the gate.
 
-- `dist/LoopForge-Setup-<version>.exe`
-- `dist/LoopForge-Setup-<version>.exe.blockmap`
-- `dist/latest.yml` — consumed by `electron-updater` on GitHub Releases
+## Real Bash, not a BusyBox alias
 
-The app is **unsigned** unless `CSC_LINK` / `CSC_KEY_PASSWORD` are set. Leave `signAndEditExecutable` at its default so rcedit can stamp `build/icon.ico`. Windows SmartScreen may warn; that is expected for unsigned builds.
+`scripts/vendor-lock.json` pins official regular **MinGit 2.56.1** (64-bit zip,
+SHA256 from Git for Windows release notes). Unlike the BusyBox variant it ships
+real GNU Bash as `usr/bin/sh.exe`. Copying those bytes to `usr/bin/bash.exe`
+selects Bash's normal mode. There is no shell shim or BusyBox masquerading as
+Bash. Windows smoke tests check BASH_VERSION, arrays, [[ ]], `bash -c`, and
+`sh -lc` with executable paths containing spaces.
 
-## Auto-update
+Audit at upstream `69e4bf0`: `internal/engine/node_execute.go` uses `sh -lc`;
+`internal/runtime/git_ssh.go` uses `sh -c`; `cli_ondemand.go` explicitly uses
+`bash -c` and pipes provider installers through Bash; sandbox environment files
+also discuss Bash startup files. Consequently POSIX ash cannot be assumed
+compatible with arbitrary provider scripts. True Bash is retained even if it
+costs some size. MinGit omits Git GUI and Perl. External provider scripts still
+have their own account, OS support and network requirements; they are not
+validated as installed/authenticated by our smoke test.
 
-The packaged app uses `electron-updater` 6.3.9 with `publish.provider = github` for `gatesenman/loopforge-desktop`. It checks GitHub Releases for `latest.yml`, downloads `LoopForge-Setup-<version>.exe`, then **prompts** before `quitAndInstall`. It does not restart mid-work. Signature verification is disabled because default builds are unsigned.
+## Python and pip: no bootstrap
 
-A GitHub Release for `vX.Y.Z` must include:
+Python 3.11.9 embedded amd64 and pip 24.3.1's pure-Python wheel have pinned
+HTTPS URLs and SHA256. The wheel is unpacked directly into Lib/site-packages,
+that directory is added to `python311._pth`, `import site` is enabled, and
+python3.exe is an identical copy of python.exe. `python -m pip --version` works
+offline. No get-pip.py, pip bootstrap request, or best-effort warning fallback.
+Runtime archive cache markers identify the exact lock; fresh extraction fails
+on a checksum/download error. Do not manually edit an extracted vendor tree.
 
-- `LoopForge-Setup-X.Y.Z.exe`
-- `LoopForge-Setup-X.Y.Z.exe.blockmap`
-- `latest.yml`
+## CI and tests
 
-## CI
+`.github/workflows/windows-installer.yml` builds on windows-latest with pinned
+Node/Go and workflow_dispatch. It fetches clean vendors, builds pristine source,
+runs security/ZIP unit tests, then native Windows runtime smoke tests, and only
+then builds NSIS. Artifacts include installer, .blockmap, latest.yml,
+build-manifest.json, and smoke result.json. This is **not GUI E2E testing**.
+The smoke tests isolate PATH from preinstalled Git/Node/Python, use directories
+with spaces, verify binary hashes, test required env checks and SQLite service
+health, and put a trap docker.exe first on PATH to fail if it is invoked. It
+also tests parent-owned stdin graceful drain/shutdown. No daemon is used.
 
-`.github/workflows/windows-installer.yml` runs on `windows-latest`: fetch vendors, build Windows bins, `npm ci`, `npm run dist` (unsigned unless signing secrets exist), and uploads the three artifacts above. No secrets are required.
+## Security and updating
+
+Only allowlisted config/check fields and lifecycle **counts** enter diagnostics.
+Raw logs, extraEnv, database, workspaces and config ciphertext are never exported.
+ZIP CRC32 is implemented locally because Electron 33's Node 20 lacks zlib.crc32.
+Data backup is deferred: copying databases/workspaces can copy credentials.
+
+safeStorage uses Windows DPAPI. Failed encryption removes stale ciphertext and
+keeps a working plaintext fallback with an explicit warning. Failed decryption
+rotates the session secret (invalidates sessions, not project data) with a warning.
+
+GitHub Releases provider: gatesenman/loopforge-desktop. Upload together:
+`LoopForge-Setup-X.Y.Z.exe`, `.exe.blockmap`, and `latest.yml`.
+Updates download and prompt; “Later” never installs automatically on quit.
+Explicit restart drains/stops the sidecar before quitAndInstall.
+Builds are unsigned unless CSC_LINK/CSC_KEY_PASSWORD are configured. SmartScreen
+may warn. Never disable rcedit/signAndEditExecutable: icons must remain stamped.

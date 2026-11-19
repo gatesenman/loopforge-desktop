@@ -10,7 +10,9 @@
     "start": "electron .",
     "fetch-vendors": "node scripts/fetch-vendors.js",
     "build-bins": "node scripts/build-loopforge-bins.js",
-    "dist": "electron-builder --win nsis --x64 --publish never"
+    "dist": "electron-builder --win nsis --x64 --publish never",
+    "test": "node --test tests/*.test.js",
+    "smoke:windows": "node scripts/windows-smoke.js"
   },
   "devDependencies": {
     "electron": "33.4.11",

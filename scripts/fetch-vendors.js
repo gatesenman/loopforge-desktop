@@ -101,18 +101,9 @@ function looksPresent(dest, marker) {
 }
 
 function postMingitShells(dest) {
-  const bin = path.join(dest, 'ucrt64', 'bin');
-  const wrapper = [
-    path.join(dest, 'ucrt64', 'share', 'git', 'git-wrapper.exe'),
-    path.join(bin, 'ash.exe'),
-  ].find((p) => fs.existsSync(p));
-  const busybox = path.join(bin, 'busybox.exe');
-  if (!wrapper || !fs.existsSync(busybox)) {
-    throw new Error('MinGit-busybox post-process: missing git-wrapper/ash.exe or busybox.exe under ' + dest);
-  }
-  fs.copyFileSync(wrapper, path.join(bin, 'sh.exe'));
-  fs.copyFileSync(busybox, path.join(bin, 'bash.exe'));
-  log('added ucrt64/bin/sh.exe (git-wrapper) and ucrt64/bin/bash.exe (busybox copy)');
+  // Official regular MinGit ships real GNU Bash named sh.exe.
+  const bin = path.join(dest, 'usr', 'bin');
+  fs.copyFileSync(path.join(bin, 'sh.exe'), path.join(bin, 'bash.exe'));
 }
 
 function postPythonSite(dest) {
@@ -128,35 +119,29 @@ function postPythonSite(dest) {
   }
 }
 
-async function maybeGetPip(pythonDest) {
-  const extra = LOCK.getPip;
-  if (!extra) return;
-  try {
-    const fileName = 'get-pip.py';
-    const dest = path.join(CACHE, fileName);
-    if (!(fs.existsSync(dest) && sha256File(dest) === extra.sha256)) {
-      log('downloading ' + extra.url);
-      await download(extra.url, dest);
-    }
-    const got = sha256File(dest);
-    if (got !== extra.sha256) {
-      log('warning: get-pip.py sha256 mismatch, skipping (optional)');
-      return;
-    }
-    fs.copyFileSync(dest, path.join(pythonDest, 'get-pip.py'));
-    log('copied get-pip.py into python dest');
-  } catch (e) {
-    log('warning: optional get-pip.py not fetched: ' + e.message);
+async function installPip(pythonDest) {
+  // Pure-Python wheel unpacked deterministically: no get-pip script, bootstrap,
+  // system Python, or install-time network request is required.
+  const wheel = await fetchVerified(LOCK.pip, path.basename(new URL(LOCK.pip.url).pathname));
+  const dest = path.join(pythonDest, 'Lib', 'site-packages');
+  extractZip(wheel, dest, 0);
+  for (const name of fs.readdirSync(pythonDest).filter((n) => n.endsWith('._pth'))) {
+    const pth = path.join(pythonDest, name);
+    let text = fs.readFileSync(pth, 'utf8');
+    if (!text.includes('Lib/site-packages')) text += '\nLib/site-packages\n';
+    fs.writeFileSync(pth, text);
   }
+  fs.copyFileSync(path.join(pythonDest, 'python.exe'), path.join(pythonDest, 'python3.exe'));
+  fs.rmSync(path.join(pythonDest, 'get-pip.py'), { force: true });
 }
 
 async function ensureRuntime(entry, marker) {
   const dest = path.join(ROOT, entry.dest);
-  if (!force && looksPresent(dest, marker)) {
+  if (!force && looksPresent(dest, marker) && fs.existsSync(path.join(dest, '.vendor-sha256')) && fs.readFileSync(path.join(dest, '.vendor-sha256'), 'utf8') === entry.sha256) {
     log('keep existing ' + entry.dest);
-    if (entry.postProcess === 'mingit-busybox-shells') {
-      const sh = path.join(dest, 'ucrt64', 'bin', 'sh.exe');
-      const bash = path.join(dest, 'ucrt64', 'bin', 'bash.exe');
+    if (entry.postProcess === 'mingit-bash') {
+      const sh = path.join(dest, 'usr', 'bin', 'sh.exe');
+      const bash = path.join(dest, 'usr', 'bin', 'bash.exe');
       if (!fs.existsSync(sh) || !fs.existsSync(bash)) postMingitShells(dest);
     }
     return dest;
@@ -164,16 +149,17 @@ async function ensureRuntime(entry, marker) {
   const zipName = path.basename(new URL(entry.url).pathname);
   const zip = await fetchVerified(entry, zipName);
   extractZip(zip, dest, entry.strip || 0);
-  if (entry.postProcess === 'mingit-busybox-shells') postMingitShells(dest);
+  if (entry.postProcess === 'mingit-bash') postMingitShells(dest);
   if (entry.postProcess === 'python-embed-site') postPythonSite(dest);
+  fs.writeFileSync(path.join(dest, '.vendor-sha256'), entry.sha256);
   return dest;
 }
 
 (async () => {
   fs.mkdirSync(CACHE, { recursive: true });
-  await ensureRuntime(LOCK.git, path.join("ucrt64", "bin", "busybox.exe"));
+  await ensureRuntime(LOCK.git, path.join('usr', 'bin', 'sh.exe'));
   await ensureRuntime(LOCK.node, 'node.exe');
   const py = await ensureRuntime(LOCK.python, 'python.exe');
-  await maybeGetPip(py);
+  await installPip(py);
   log('vendors ready');
 })().catch((e) => fail(e.stack || e.message));

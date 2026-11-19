@@ -17,7 +17,7 @@ This is a community desktop package, not an official Tencent release.
 | | Desktop build 0.4.0 |
 | --- | --- |
 | Runtime | Local process + SQLite under `%APPDATA%\LoopForge` |
-| Bundled tools | Git for Windows **MinGit-busybox** (git + sh/bash applets), Node.js 22 (with npm), Python 3.11 |
+| Bundled tools | Git for Windows **MinGit** (git + real GNU Bash/sh), Node.js 22 (with npm), Python 3.11 |
 | Docker | Not used and not required. The app never starts or probes Docker, so it will not flash black console windows. |
 | Startup | Required bundled tools are checked silently. If they pass, the app goes straight to the workbench (no blocking wizard). |
 | Updates | In-app check against GitHub Releases (notify, download, then a restart prompt). |
@@ -44,7 +44,7 @@ The workbench above is the in-app LoopForge UI (upstream interface) after you cr
 5. Try the built-in sample SOP `welcome-workflow` in the LoopForge experience project — it does not need a model key.
 6. To use AI chat or delivery SOPs, install at least one coding-agent CLI from the environment check (CodeBuddy or Codex recommended), sign in or paste a key in settings, then click **Recheck**.
 
-Data stays in `%APPDATA%\LoopForge` and is kept on uninstall by default. Use **File → Export diagnostics** (logs, versions, env-check results; no secrets) or **File → Back up data directory** if you need a zip. The session secret is stored with Windows DPAPI when available.
+Data stays in `%APPDATA%\LoopForge` and is kept on uninstall by default. Use **File → Export diagnostics** for a zip of lifecycle counts, versions and allowlisted env-check results. Raw logs, config/extraEnv, database and workspaces are excluded rather than relying on best-effort secret redaction. An automatic data backup helper is intentionally not offered because databases/workspaces can contain credentials. The session secret is stored with Windows DPAPI when available.
 
 The sidecar process is supervised: if it crashes, the app retries a few times with backoff, then shows the error page. Quitting stops the service gracefully (force-kill is the last resort).
 
@@ -63,7 +63,7 @@ The app does not detect, recommend, or install Docker / Docker Desktop / WSL.
 
 The only mode is **local execution**. Features that officially need a Docker sandbox are unavailable or reduced: container isolation, image-based reproducible environments, Linux toolchains preinstalled in a sandbox, and anything that must talk to a Docker daemon. Use this build only with trusted repositories and tasks.
 
-The bundled shell is BusyBox (from official MinGit-busybox), not a full Git Bash / MSYS2 userland. Typical POSIX SOP scripts work; scripts that need Perl, Git GUI, or uncommon GNU extensions may not.
+The official regular MinGit bundle contains real GNU Bash (also named sh). CLI-only MinGit omits Git GUI and Perl. Windows CI tests Bash arrays, sh, Git, Node/npm, Python/pip and the service in paths containing spaces; these are command-line integration tests, not Windows GUI end-to-end testing.
 
 ## Build from source
 
@@ -82,12 +82,12 @@ The output is `dist/LoopForge-Setup-<version>.exe` plus `latest.yml` (for GitHub
 
 ### 0.4.0
 
-- Slim runtimes: official Git for Windows MinGit-busybox instead of full PortableGit; Windows-only sidecar bins (no Linux runner/gate-mcp, no `loopforge-account.exe`). The NSIS installer is about **166 MB** (174,038,056 bytes; down from about 246 MB in 0.3.10).
+- Slim runtimes: official Git for Windows MinGit instead of full PortableGit; Windows-only sidecar bins (no Linux runner/gate-mcp, no `loopforge-account.exe`). Installer size/checksum: see the verified release assets (revised build pending).
 - Silent startup when bundled Git / Node / Python and the local service are healthy. Optional Agent CLIs no longer block first launch; post-login onboarding can be skipped.
 - Sidecar supervisor: HTTP health checks, limited crash restarts with backoff, graceful stop on quit.
 - In-app CLI installs (hidden process, no visible `cmd` window).
 - Auto-update from GitHub Releases (`electron-updater`, notify + download + restart prompt). Default builds are unsigned.
-- Session secret protected with Windows DPAPI when available. Diagnostic zip and data-directory backup from the File menu.
+- Session secret protected with Windows DPAPI when available. Allowlisted diagnostic zip from the File menu; raw logs and credential-bearing data are excluded. Python includes pinned pip offline (no get-pip bootstrap).
 - Reproducible vendor lockfile and Windows CI workflow.
 
 ## License

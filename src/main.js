@@ -4,11 +4,12 @@ const path = require('path');
 const fs = require('fs');
 const net = require('net');
 const crypto = require('crypto');
+const { pathToFileURL } = require('url');
 const { spawn, execFile } = require('child_process');
 const { runChecks, pathKey, requiredReady, npmCliJs, firstExisting, which } = require('./envcheck');
 const secret = require('./secret');
 const { setupAutoUpdate } = require('./updater');
-const { exportDiagnostics, backupDataDir } = require('./diagnostics');
+const { exportDiagnostics } = require('./diagnostics');
 
 const isWin = process.platform === 'win32';
 app.setName('LoopForge');
@@ -49,6 +50,7 @@ function loadConfig() {
   let cfg = {};
   try { cfg = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8')); } catch (_) { /* first run */ }
   secret.fromDisk(cfg, isWin);
+  if (cfg.sessionSecretEnc && !cfg.sessionSecret) cfg.secretRecoveryNotice = true;
   let dirty = false;
   if (!cfg.sessionSecret) {
     cfg.sessionSecret = crypto.randomBytes(32).toString('hex');
@@ -65,6 +67,8 @@ function loadConfig() {
 function saveConfig(cfg) {
   fs.mkdirSync(DATA, { recursive: true });
   const disk = secret.toDisk({ ...cfg }, isWin);
+  cfg.secretStorage = disk.sessionSecretEnc ? 'dpapi' : 'plaintext-fallback';
+  disk.secretStorage = cfg.secretStorage;
   fs.writeFileSync(CONFIG_PATH, JSON.stringify(disk, null, 2));
 }
 let config;
@@ -116,6 +120,7 @@ function serverEnv(port) {
     AGENTFLOW_RUNNER_BINARY: path.join(BIN, 'agentflow-runner-{os}-{arch}'),
     AGENTFLOW_GATE_MCP_BINARY: path.join(BIN, 'agentflow-gate-mcp-{os}-{arch}'),
     LOOPFORGE_DESKTOP: '1',
+    LOOPFORGE_DESKTOP_STDIN_CONTROL: '1',
     AGENTFLOW_DISABLE_DOCKER: '1',
   });
   delete env.AGENTFLOW_LOCAL_SANDBOX;
@@ -125,7 +130,7 @@ function serverEnv(port) {
     env.MSYS2_PATH_TYPE = env.MSYS2_PATH_TYPE || 'inherit';
   }
   for (const [k, v] of Object.entries(config.extraEnv || {})) {
-    if (/^AGENTFLOW_(LOCAL_SANDBOX|ISOLATED_IMAGE|DOCKER_NETWORK)$/.test(k)) continue;
+    if (/^(AGENTFLOW_|LOOPFORGE_DESKTOP)/.test(k)) continue;
     env[k] = String(v);
   }
   return env;
@@ -141,7 +146,7 @@ function portFree(port) {
   });
 }
 async function pickPort() {
-  if (await portFree(config.port)) return config.port;
+  if (Number.isInteger(config.port) && config.port >= PORT_MIN && config.port <= PORT_MAX && await portFree(config.port)) return config.port;
   for (let p = PORT_MIN + 1; p <= PORT_MAX; p++) {
     if (await portFree(p)) { config.port = p; saveConfig(config); return p; }
   }
@@ -182,7 +187,8 @@ function startHealthWatch(s) {
     if (healthFails >= HEALTH_FAILS_BEFORE_RESTART) {
       clearHealthTimers();
       appendLog('===== health checks exhausted, restarting sidecar =====');
-      await killTree(s.proc && s.proc.pid);
+      await killTree(s.proc && s.proc.pid, false);
+      if (!s.exited) await killTree(s.proc && s.proc.pid, true);
       // exit handler will schedule the supervisor restart
     }
   }, HEALTH_INTERVAL_MS);
@@ -197,10 +203,15 @@ async function startServer() {
   if (!serverLog) serverLog = openLog();
   serverLog.write(`\n===== ${new Date().toISOString()} starting ${bin} on 127.0.0.1:${port} (runtime=local, docker=off) =====\n`);
   const proc = spawn(bin, ['-addr', `127.0.0.1:${port}`, '-workspaces', path.join(DATA, 'workspaces')], {
-    cwd: DATA, env: serverEnv(port), windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'],
+    cwd: DATA, env: serverEnv(port), windowsHide: true, stdio: ['pipe', 'pipe', 'pipe'],
   });
   const s = { proc, port, url: `http://127.0.0.1:${port}`, stopping: false, exited: false };
   server = s;
+  proc.on('error', (err) => {
+    s.exited = true;
+    appendLog('sidecar spawn failed: ' + err.message);
+  });
+  proc.stdin.on('error', () => {});
   proc.stdout.on('data', (b) => serverLog && serverLog.write(b));
   proc.stderr.on('data', (b) => serverLog && serverLog.write(b));
   proc.on('exit', (code, sig) => {
@@ -247,9 +258,9 @@ async function stopServer() {
   s.stopping = true;
   if (server === s) server = null;
   if (!s.exited && s.proc && s.proc.pid) {
-    // Prefer a graceful WM_CLOSE / SIGTERM, then force-kill the tree.
-    await killTree(s.proc.pid, false);
-    const deadline = Date.now() + 5000;
+    // Parent-owned stdin control feeds the Go service's normal drain path.
+    try { s.proc.stdin.end('shutdown\n'); } catch (_) { /* process already gone */ }
+    const deadline = Date.now() + 20000;
     while (!s.exited && Date.now() < deadline) await new Promise((r) => setTimeout(r, 200));
     if (!s.exited) await killTree(s.proc.pid, true);
   }
@@ -331,10 +342,10 @@ function showError(title, detail) {
   }
 }
 
-async function collectChecks() {
+async function collectChecks(requiredOnly = false) {
   return runChecks({
     env: childEnv(), dataDir: DATA, gitDir: GIT_DIR, nodeDir: NODE_DIR,
-    pythonDir: PYTHON_DIR, serverUrl: server && server.url, mirror: config.npmMirror,
+    requiredOnly, pythonDir: PYTHON_DIR, serverUrl: server && server.url, mirror: config.npmMirror,
   });
 }
 
@@ -359,7 +370,7 @@ async function bootServerIntoWindow(opts = {}) {
     // Required bundled tools are checked silently. Only open the env-check
     // page when a required item fails. Optional Agent CLIs never block startup.
     let report = null;
-    try { report = await collectChecks(); } catch (e) { appendLog('silent env check failed: ' + e.message); }
+    try { report = await collectChecks(true); } catch (e) { appendLog('silent env check failed: ' + e.message); }
     if (report && !requiredReady(report)) {
       openEnvCheck(true);
       return;
@@ -450,7 +461,6 @@ function buildMenu() {
         { label: '打开数据目录', click: () => shell.openPath(DATA) },
         { label: '打开服务日志', click: () => shell.openPath(path.join(LOG_DIR, 'server.log')) },
         { label: '导出诊断包…', click: () => doExportDiagnostics() },
-        { label: '备份数据目录…', click: () => doBackupData() },
         { label: '重启服务', click: () => restartServer() },
         { type: 'separator' },
         { label: '退出', role: 'quit' },
@@ -510,15 +520,6 @@ async function doExportDiagnostics() {
     if (file) dialog.showMessageBox({ type: 'info', message: '诊断包已保存', detail: file });
   } catch (e) {
     dialog.showErrorBox('导出诊断包失败', String(e && e.message || e));
-  }
-}
-
-async function doBackupData() {
-  try {
-    const file = await backupDataDir({ dataDir: DATA, config });
-    if (file) dialog.showMessageBox({ type: 'info', message: '数据备份已保存', detail: file });
-  } catch (e) {
-    dialog.showErrorBox('备份失败', String(e && e.message || e));
   }
 }
 
@@ -612,7 +613,8 @@ function runHiddenCommand(command, sender) {
 let allowedActions = new Set();
 function trusted(e) {
   const url = (e.senderFrame && e.senderFrame.url) || e.sender.getURL();
-  return url.startsWith('file://');
+  const allowed = ['envcheck.html', 'error.html', 'splash.html'].map((f) => pathToFileURL(path.join(__dirname, f)).href);
+  return !!mainWindow && e.sender === mainWindow.webContents && allowed.includes(url.split('?')[0]);
 }
 function guard(fn) {
   return (e, ...args) => { if (!trusted(e)) throw new Error('forbidden'); return fn(e, ...args); };
@@ -658,10 +660,19 @@ if (!app.requestSingleInstanceLock()) {
     buildMenu();
     updater = setupAutoUpdate({
       isWin,
+      onInstall: async () => { quitting = true; await stopServer(); },
       getWindow: () => mainWindow,
       log: (m) => appendLog(m),
     });
     createMainWindow();
+    if (config.secretRecoveryNotice) {
+      dialog.showMessageBox(mainWindow, { type: 'warning', message: '会话保护密钥无法解密，已安全重建。', detail: '现有登录会话将失效，请重新登录；数据库与项目数据不会删除。' });
+      delete config.secretRecoveryNotice; saveConfig(config);
+    }
+    if (isWin && config.secretStorage === 'plaintext-fallback' && !config.secretFallbackWarned) {
+      dialog.showMessageBox(mainWindow, { type: 'warning', message: 'Windows 密钥保护暂时不可用。', detail: '为避免无法启动，会话密钥暂存于本机配置文件。请勿分享 desktop-config.json；诊断包不会包含它。' });
+      config.secretFallbackWarned = true; saveConfig(config);
+    }
     bootServerIntoWindow({ forceEnv: process.argv.includes('--env-check') });
   });
   app.on('window-all-closed', () => { app.quit(); });

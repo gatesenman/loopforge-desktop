@@ -202,7 +202,7 @@ async function runChecks(ctx) {
     }, env),
     checkPython(env, pythonDir),
   ];
-  const agentJobs = AGENT_CLIS.map(async (c) => {
+  const agentJobs = (ctx.requiredOnly ? [] : AGENT_CLIS).map(async (c) => {
     const base = { id: 'cli-' + c.id, name: c.name, level: 'agent', purpose: c.note || '编码 Agent（任选其一即可，需自行登录）' };
     const found = which(c.bin, env);
     const installAction = c.pkg

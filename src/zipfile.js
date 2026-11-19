@@ -3,7 +3,15 @@
 const fs = require('fs');
 const path = require('path');
 const zlib = require('zlib');
-const { crc32 } = require('zlib');
+// Electron 33 uses Node 20, which does not expose zlib.crc32.
+function crc32(data) {
+  let crc = 0xffffffff;
+  for (const byte of data) {
+    crc ^= byte;
+    for (let i = 0; i < 8; i++) crc = (crc >>> 1) ^ ((crc & 1) ? 0xedb88320 : 0);
+  }
+  return (crc ^ 0xffffffff) >>> 0;
+}
 
 function dosDateTime(date) {
   const d = date || new Date();
