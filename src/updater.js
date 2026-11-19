@@ -19,10 +19,9 @@ function setupAutoUpdate({ isWin, getWindow, log, onInstall }) {
   autoUpdater.autoDownload = true;
   autoUpdater.autoInstallOnAppQuit = false;
   autoUpdater.allowPrerelease = false;
-  // Builds are typically unsigned. Do not pretend a signature will be verified.
-  if (isWin) {
-    autoUpdater.verifyUpdateCodeSignature = false;
-  }
+  // Keep electron-updater's signature verifier intact. Unsigned builder
+  // output has no publisherName, so updater skips Authenticode naturally.
+  // A future signed build can publish publisherName and get real verification.
   autoUpdater.on('error', (err) => { if (log) log('auto-update: ' + String(err && err.message || err)); });
   autoUpdater.on('update-downloaded', (info) => {
     const win = getWindow && getWindow();

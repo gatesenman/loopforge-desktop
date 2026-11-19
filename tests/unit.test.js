@@ -49,3 +49,28 @@ test('ZIP uses standard CRC32 without Node22-only APIs', () => {
     assert.equal(data.readUInt32LE(0), 0x04034b50);
   } finally { fs.rmSync(tmp, { recursive: true, force: true }); }
 });
+test('updater Later never auto-installs; explicit restart waits for sidecar stop', async () => {
+  const events = {};
+  const calls = [];
+  let response = 1;
+  const fake = { on: (k, fn) => { events[k] = fn; }, quitAndInstall: () => calls.push('install') };
+  const oldLoad = Module._load, oldTimeout = global.setTimeout;
+  Module._load = function(id, ...args) {
+    if (id === 'electron') return { app: { isPackaged: true }, dialog: { showMessageBox: async () => ({ response }) } };
+    if (id === 'electron-updater') return { autoUpdater: fake };
+    return oldLoad.call(this, id, ...args);
+  };
+  global.setTimeout = () => 0;
+  try {
+    delete require.cache[require.resolve('../src/updater')];
+    require('../src/updater').setupAutoUpdate({ isWin: true, onInstall: async () => { calls.push('stop'); } });
+    assert.equal(fake.autoInstallOnAppQuit, false);
+    events['update-downloaded']({ version: '0.4.1' });
+    await new Promise(setImmediate);
+    assert.deepEqual(calls, []);
+    response = 0;
+    events['update-downloaded']({ version: '0.4.1' });
+    await new Promise(setImmediate);
+    assert.deepEqual(calls, ['stop', 'install']);
+  } finally { Module._load = oldLoad; global.setTimeout = oldTimeout; }
+});
