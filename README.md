@@ -12,6 +12,14 @@ This is a community desktop package, not an official Tencent release.
   <img src="docs/screenshots/startup.png" alt="LoopForge Desktop starting up" width="720">
 </p>
 
+## First-run checklist
+
+The desktop shell can write a bundled-runtime status report and a next-steps page from `src/checklist.js`, without building a Windows installer.
+
+```bash
+node --test test/envcheck.test.js
+```
+
 ## What you get
 
 | | Desktop build |
