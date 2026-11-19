@@ -2,7 +2,7 @@
   "name": "loopforge-desktop",
   "productName": "LoopForge",
   "version": "0.3.9",
-  "description": "LoopForge \u684c\u9762\u7248\uff1a\u5b89\u88c5\u5373\u7528\uff08\u5185\u7f6e Git / Node.js / Python \u4e0e\u672c\u5730\u8fd0\u884c\u65f6\uff0c\u65e0\u9700 Docker\uff09",
+  "description": "LoopForge 桌面版：安装即用（内置 Git / Node.js / Python 与本地运行时，无需 Docker）",
   "author": "LoopForge Desktop packaging (upstream: Tencent/LoopForge, MIT)",
   "license": "MIT",
   "main": "src/main.js",
