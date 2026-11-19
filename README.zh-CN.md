@@ -82,7 +82,7 @@ npm run dist
 
 ### 0.4.0
 
-- 运行时瘦身：用官方 Git for Windows MinGit 替换完整便携版 Git；安装包只包含 Windows 平台程序（去掉 Linux 的 runner/gate-mcp，以及默认不需要的 `loopforge-account.exe`）。修订后的安装包体积与校验值以验证后的发行附件为准。
+- 运行时瘦身：用官方 Git for Windows MinGit 替换完整便携版 Git；安装包只包含 Windows 平台程序（去掉 Linux 的 runner/gate-mcp，以及默认不需要的 `loopforge-account.exe`）。已验证的 NSIS 安装包为 **189.96 MB / 181.16 MiB**（189,957,485 字节）。
 - 静默启动：内置 Git / Node / Python 与本地服务通过后直接进工作台；可选 Agent CLI 不再挡住首次启动，登录后的引导可跳过。
 - 服务守护：HTTP 健康检查、有限次崩溃重启、退出时优雅停止。
 - 在应用内安装 CLI（隐藏进程，不再弹出 `cmd` 窗口）。

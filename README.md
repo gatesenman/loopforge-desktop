@@ -82,7 +82,7 @@ The output is `dist/LoopForge-Setup-<version>.exe` plus `latest.yml` (for GitHub
 
 ### 0.4.0
 
-- Slim runtimes: official Git for Windows MinGit instead of full PortableGit; Windows-only sidecar bins (no Linux runner/gate-mcp, no `loopforge-account.exe`). Installer size/checksum: see the verified release assets (revised build pending).
+- Slim runtimes: official Git for Windows MinGit instead of full PortableGit; Windows-only sidecar bins (no Linux runner/gate-mcp, no `loopforge-account.exe`). Verified NSIS build: **189.96 MB / 181.16 MiB** (189,957,485 bytes).
 - Silent startup when bundled Git / Node / Python and the local service are healthy. Optional Agent CLIs no longer block first launch; post-login onboarding can be skipped.
 - Sidecar supervisor: HTTP health checks, limited crash restarts with backoff, graceful stop on quit.
 - In-app CLI installs (hidden process, no visible `cmd` window).
