@@ -28,11 +28,33 @@ function which(name, env) {
   return '';
 }
 
+function npmCliJs(npmCmd) {
+  const dir = path.dirname(npmCmd);
+  return firstExisting([
+    path.join(dir, 'node_modules', 'npm', 'bin', 'npm-cli.js'),
+    path.join(dir, 'lib', 'node_modules', 'npm', 'bin', 'npm-cli.js'),
+  ]);
+}
+
+// Hidden process, never `shell: true` — that flashes a Windows console.
 function run(file, args, env, timeoutMs = 10000) {
   return new Promise((resolve) => {
-    const needsShell = isWin && /\.(cmd|bat)$/i.test(file);
-    const cmd = needsShell ? `"${file}" ${args.join(' ')}` : file;
-    execFile(cmd, needsShell ? [] : args, { env, timeout: timeoutMs, windowsHide: true, shell: needsShell, encoding: 'buffer' }, (err, stdout, stderr) => {
+    let cmd = file;
+    let argv = args || [];
+    const opts = { env, timeout: timeoutMs, windowsHide: true, shell: false, encoding: 'buffer', stdio: ['ignore', 'pipe', 'pipe'] };
+    if (isWin && /\.(cmd|bat)$/i.test(file)) {
+      const cli = /npm/i.test(path.basename(file)) ? npmCliJs(file) : '';
+      const node = firstExisting(bundledCandidates(path.dirname(file), ['node.exe'])) || which('node', env);
+      if (cli && node) {
+        cmd = node;
+        argv = [cli, ...argv];
+      } else {
+        cmd = env.ComSpec || process.env.ComSpec || 'cmd.exe';
+        argv = ['/d', '/s', '/c', `"${file}" ${argv.map((a) => /\s/.test(a) ? `"${a}"` : a).join(' ')}`];
+        opts.windowsVerbatimArguments = true;
+      }
+    }
+    execFile(cmd, argv, opts, (err, stdout, stderr) => {
       const decode = (b) => {
         if (!b || !b.length) return '';
         if (b.length > 1 && b[1] === 0) return b.toString('utf16le');
@@ -188,9 +210,14 @@ async function runChecks(ctx) {
       : { label: '运行官方安装脚本', type: 'cmd', command: c.cmd };
     const actions = [installAction, c.url && { label: '官网', type: 'url', url: c.url }].filter(Boolean);
     if (!found) return { ...base, status: 'missing', detail: c.pkg ? `可选：用内置 npm 安装 ${c.pkg}` : '可选：需官方安装脚本（并登录账号）', actions };
-    const v = await run(found, ['--version'], env, 15000);
-    if (!v.ok) return { ...base, status: 'warn', path: found, detail: `已安装但无法运行：${firstLine(v.out)}`, actions };
-    return { ...base, status: 'ok', path: found, version: versionOf(v.out), actions: c.pkg ? [{ label: '更新', type: 'cmd', command: npmCmd(c.pkg.replace(/@[\d.]+$/, '') + '@latest', mirror) }] : [] };
+    // Presence is enough for optional CLIs; running --version on .cmd shims flashes a console.
+    const isCmd = isWin && /\.(cmd|bat)$/i.test(found);
+    let ver = '';
+    if (!isCmd) {
+      const v = await run(found, ['--version'], env, 8000);
+      if (v.ok) ver = versionOf(v.out);
+    }
+    return { ...base, status: 'ok', path: found, version: ver, detail: ver ? undefined : '已安装', actions: c.pkg ? [{ label: '更新', type: 'cmd', command: npmCmd(c.pkg.replace(/@[\d.]+$/, '') + '@latest', mirror) }] : [] };
   });
   const results = await Promise.all([...jobs, ...agentJobs]);
   const agents = results.filter((r) => r.level === 'agent');

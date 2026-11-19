@@ -22,7 +22,6 @@ const NODE_DIR = path.join(RES, 'runtime', 'node');
 const PYTHON_DIR = path.join(RES, 'runtime', 'python');
 
 let mainWindow = null;
-let envWindow = null;
 let server = null; // { proc, port, url, stopping }
 let serverLog = null;
 let quitting = false;
@@ -221,14 +220,15 @@ function createMainWindow() {
 }
 
 function openEnvCheck(firstRun) {
-  if (envWindow) { envWindow.focus(); return; }
-  envWindow = new BrowserWindow({
-    width: 980, height: 760, minWidth: 760, minHeight: 560, title: 'LoopForge 环境检查',
-    icon: path.join(__dirname, 'icon.png'), parent: firstRun ? undefined : mainWindow || undefined, autoHideMenuBar: true,
-    webPreferences: { contextIsolation: true, sandbox: true, preload: path.join(__dirname, 'preload.js') },
-  });
-  envWindow.loadFile(path.join(__dirname, 'envcheck.html'), { query: { first: firstRun ? '1' : '0' } });
-  envWindow.on('closed', () => { envWindow = null; });
+  // Stay in the main window so first launch doesn't stack a second popup
+  // on top of the splash / app, and no extra BrowserWindow is created.
+  if (!mainWindow) createMainWindow();
+  const q = firstRun ? '1' : '0';
+  mainWindow.setTitle(firstRun ? 'LoopForge 环境检查' : 'LoopForge 环境检查');
+  mainWindow.loadFile(path.join(__dirname, 'envcheck.html'), { query: { first: q } });
+  if (mainWindow.isMinimized()) mainWindow.restore();
+  mainWindow.show();
+  mainWindow.focus();
 }
 
 function showError(title, detail) {
@@ -239,11 +239,16 @@ function showError(title, detail) {
   }
 }
 
-async function bootServerIntoWindow() {
+async function bootServerIntoWindow(opts = {}) {
+  const showEnv = !!opts.showEnv;
   try {
-    if (mainWindow) mainWindow.loadURL(splashURL('正在启动 LoopForge 服务…（首次启动需初始化数据库，约 10–30 秒）'));
+    if (mainWindow) mainWindow.loadURL(splashURL(showEnv
+      ? '正在启动 LoopForge 服务，随后进行环境检查…（首次启动需初始化数据库，约 10–30 秒）'
+      : '正在启动 LoopForge 服务…（首次启动需初始化数据库，约 10–30 秒）'));
     const s = await startServer();
-    if (mainWindow) mainWindow.loadURL(s.url + '/');
+    if (!mainWindow) return;
+    if (showEnv) openEnvCheck(true);
+    else mainWindow.loadURL(s.url + '/');
   } catch (e) {
     showError('LoopForge 服务启动失败', String(e && e.message || e));
   }
@@ -329,7 +334,7 @@ ipcMain.handle('env:check', guard(async () => {
 ipcMain.handle('env:action', guard(async (_e, action) => {
   if (!action || typeof action !== 'object' || !allowedActions.has(JSON.stringify(action))) return false;
   if (action.type === 'url' && /^https:\/\//.test(action.url)) { await shell.openExternal(action.url); return true; }
-  if (action.type === 'launch' && action.file && fs.existsSync(action.file)) { spawn(action.file, [], { detached: true, stdio: 'ignore' }).unref(); return true; }
+  if (action.type === 'launch' && action.file && fs.existsSync(action.file)) { spawn(action.file, [], { detached: true, stdio: 'ignore', windowsHide: true }).unref(); return true; }
   if (action.type === 'cmd' && typeof action.command === 'string') {
     // Visible console so the user sees progress, prompts (UAC/winget) and errors.
     if (isWin) {
@@ -349,9 +354,12 @@ ipcMain.handle('env:setMode', guard(() => { setMode('local'); return true; }));
 ipcMain.handle('env:done', guard(() => {
   config.firstRunDone = true;
   saveConfig(config);
-  if (envWindow) envWindow.close();
-  if (!mainWindow) { createMainWindow(); }
-  if (mainWindow) mainWindow.focus();
+  if (!mainWindow) createMainWindow();
+  if (mainWindow) {
+    mainWindow.setTitle('LoopForge');
+    if (server) mainWindow.loadURL(server.url + '/');
+    mainWindow.focus();
+  }
   return true;
 }));
 ipcMain.handle('app:retry', guard(() => restartServer()));
@@ -363,16 +371,14 @@ if (!app.requestSingleInstanceLock()) {
   app.quit();
 } else {
   app.on('second-instance', () => {
-    const w = mainWindow || envWindow;
-    if (w) { if (w.isMinimized()) w.restore(); w.focus(); }
+    if (mainWindow) { if (mainWindow.isMinimized()) mainWindow.restore(); mainWindow.focus(); }
   });
   app.whenReady().then(async () => {
     config = loadConfig();
     buildMenu();
-    const firstRun = !config.firstRunDone;
+    const firstRun = !config.firstRunDone || process.argv.includes('--env-check');
     createMainWindow();
-    bootServerIntoWindow();
-    if (firstRun || process.argv.includes('--env-check')) openEnvCheck(true);
+    bootServerIntoWindow({ showEnv: firstRun });
   });
   app.on('window-all-closed', () => { app.quit(); });
   app.on('before-quit', (e) => {

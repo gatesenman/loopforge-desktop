@@ -1,7 +1,7 @@
 {
   "name": "loopforge-desktop",
   "productName": "LoopForge",
-  "version": "0.3.8",
+  "version": "0.3.9",
   "description": "LoopForge 桌面版：安装即用（内置 Git / Node.js / Python 与本地运行时，无需 Docker）",
   "author": "LoopForge Desktop packaging (upstream: Tencent/LoopForge, MIT)",
   "license": "MIT",
@@ -79,5 +79,8 @@
       "license": "licenses/LICENSE-LoopForge.txt",
       "include": "build/installer.nsh"
     }
+  },
+  "allowScripts": {
+    "electron@33.4.11": true
   }
 }

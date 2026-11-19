@@ -1,0 +1,272 @@
+diff --git a/internal/osx/osx_windows.go b/internal/osx/osx_windows.go
+new file mode 100644
+index 0000000..58b6310
+--- /dev/null
++++ b/internal/osx/osx_windows.go
+@@ -0,0 +1,97 @@
++//go:build windows
++
++package osx
++
++import (
++	"errors"
++	"hash/fnv"
++	"os"
++	"os/exec"
++	"strconv"
++	"syscall"
++
++	"golang.org/x/sys/windows"
++)
++
++// SetProcessGroup starts cmd in a new process group with no console window.
++func SetProcessGroup(cmd *exec.Cmd) {
++	if cmd.SysProcAttr == nil {
++		cmd.SysProcAttr = &syscall.SysProcAttr{}
++	}
++	cmd.SysProcAttr.CreationFlags |= windows.CREATE_NEW_PROCESS_GROUP | windows.CREATE_NO_WINDOW
++	cmd.SysProcAttr.HideWindow = true
++}
++
++// HasProcessGroup reports whether SetProcessGroup was applied to cmd.
++func HasProcessGroup(cmd *exec.Cmd) bool {
++	return cmd.SysProcAttr != nil && cmd.SysProcAttr.CreationFlags&windows.CREATE_NEW_PROCESS_GROUP != 0
++}
++
++// KillGroup force-kills pid and its whole child tree.
++func KillGroup(pid int) error {
++	if pid <= 0 {
++		return nil
++	}
++	kill := exec.Command("taskkill", "/T", "/F", "/PID", strconv.Itoa(pid))
++	kill.SysProcAttr = &syscall.SysProcAttr{HideWindow: true, CreationFlags: windows.CREATE_NO_WINDOW}
++	err := kill.Run()
++	if err != nil {
++		if p, findErr := os.FindProcess(pid); findErr == nil {
++			_ = p.Kill()
++		}
++	}
++	return err
++}
++
++// TerminateGroup has no graceful equivalent for arbitrary trees on Windows.
++func TerminateGroup(pid int) error { return KillGroup(pid) }
++
++// HangupGroup kills the tree (no SIGHUP on Windows).
++func HangupGroup(pid int) error { return KillGroup(pid) }
++
++// Alive reports whether pid names a running process.
++func Alive(pid int) bool {
++	if pid <= 0 {
++		return false
++	}
++	h, err := windows.OpenProcess(windows.PROCESS_QUERY_LIMITED_INFORMATION, false, uint32(pid))
++	if err != nil {
++		return errors.Is(err, windows.ERROR_ACCESS_DENIED)
++	}
++	defer windows.CloseHandle(h)
++	var code uint32
++	if windows.GetExitCodeProcess(h, &code) != nil {
++		return true
++	}
++	return code == 259 // STILL_ACTIVE
++}
++
++// Signalable reports whether pid is alive (Windows has no signal-0 probe).
++func Signalable(pid int) bool { return Alive(pid) }
++
++// TryLock takes a non-blocking exclusive lock; ErrLocked when held elsewhere.
++func TryLock(f *os.File) error {
++	ol := new(windows.Overlapped)
++	err := windows.LockFileEx(windows.Handle(f.Fd()), windows.LOCKFILE_EXCLUSIVE_LOCK|windows.LOCKFILE_FAIL_IMMEDIATELY, 0, 1, 0, ol)
++	if errors.Is(err, windows.ERROR_LOCK_VIOLATION) || errors.Is(err, windows.ERROR_IO_PENDING) {
++		return ErrLocked
++	}
++	return err
++}
++
++// Unlock releases a lock taken by TryLock.
++func Unlock(f *os.File) error {
++	ol := new(windows.Overlapped)
++	return windows.UnlockFileEx(windows.Handle(f.Fd()), 0, 1, 0, ol)
++}
++
++// Identity has no inode on Windows FileInfo; a stable hash of the name and
++// creation time stands in so identity checks keep working per path.
++func Identity(info os.FileInfo) (FileID, bool) {
++	h := fnv.New64a()
++	_, _ = h.Write([]byte(info.Name()))
++	if d, ok := info.Sys().(*syscall.Win32FileAttributeData); ok {
++		_, _ = h.Write([]byte(strconv.FormatInt(d.CreationTime.Nanoseconds(), 10)))
++	}
++	return FileID{Dev: 1, Ino: h.Sum64(), Uid: 0, Nlink: 1}, true
++}
+diff --git a/internal/runner/daemon.go b/internal/runner/daemon.go
+index c4ea0e8..2db15b8 100644
+--- a/internal/runner/daemon.go
++++ b/internal/runner/daemon.go
+@@ -623,6 +623,9 @@ func (d *Daemon) executeRunCleanup(ctx context.Context, task domain.RunnerTask)
+ }
+ 
+ func cleanupDockerWorkspace(ctx context.Context, workspace string) error {
++	if runtime.DesktopHostRuntime() {
++		return nil
++	}
+ 	if _, err := exec.LookPath("docker"); err != nil {
+ 		return nil
+ 	}
+diff --git a/internal/runtime/hidewindow_other.go b/internal/runtime/hidewindow_other.go
+new file mode 100644
+index 0000000..9b30e5a
+--- /dev/null
++++ b/internal/runtime/hidewindow_other.go
+@@ -0,0 +1,7 @@
++//go:build !windows
++
++package runtime
++
++import "os/exec"
++
++func hideCommandWindow(cmd *exec.Cmd) {}
+diff --git a/internal/runtime/hidewindow_windows.go b/internal/runtime/hidewindow_windows.go
+new file mode 100644
+index 0000000..47219dc
+--- /dev/null
++++ b/internal/runtime/hidewindow_windows.go
+@@ -0,0 +1,23 @@
++//go:build windows
++
++package runtime
++
++import (
++	"os/exec"
++	"syscall"
++
++	"golang.org/x/sys/windows"
++)
++
++// hideCommandWindow prevents a console or Windows Terminal tab from flashing
++// when a console-subsystem tool (docker.exe, git.exe, cmd.exe) is started.
++func hideCommandWindow(cmd *exec.Cmd) {
++	if cmd == nil {
++		return
++	}
++	if cmd.SysProcAttr == nil {
++		cmd.SysProcAttr = &syscall.SysProcAttr{}
++	}
++	cmd.SysProcAttr.HideWindow = true
++	cmd.SysProcAttr.CreationFlags |= windows.CREATE_NO_WINDOW
++}
+diff --git a/internal/runtime/sandbox_docker.go b/internal/runtime/sandbox_docker.go
+index 0540f44..ce0474c 100644
+--- a/internal/runtime/sandbox_docker.go
++++ b/internal/runtime/sandbox_docker.go
+@@ -102,6 +102,9 @@ func removeDockerContainer(ctx context.Context, name string) error {
+ // that only ever use the local driver. Cleanup runs per finished run and on a
+ // 20s sweep, so this is on a hot path.
+ var dockerAvailable = sync.OnceValue(func() bool {
++	if desktopHostRuntime() {
++		return false
++	}
+ 	_, err := exec.LookPath("docker")
+ 	return err == nil
+ })
+@@ -123,7 +126,9 @@ func DockerReady() bool {
+ 	ok := false
+ 	if dockerAvailable() {
+ 		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+-		ok = exec.CommandContext(ctx, "docker", "version", "--format", "{{.Server.Version}}").Run() == nil
++		cmd := exec.CommandContext(ctx, "docker", "version", "--format", "{{.Server.Version}}")
++		hideCommandWindow(cmd)
++		ok = cmd.Run() == nil
+ 		cancel()
+ 	}
+ 	dockerReady.checked, dockerReady.ok = time.Now(), ok
+@@ -707,7 +712,7 @@ func (s *dockerSandbox) start(ctx context.Context, recreate bool) error {
+ 	// Native installs own private (0700) workspaces as the service user.
+ 	// A root image without DAC capabilities cannot access another UID's bind.
+ 	// Run default/root images as that user; retain explicit non-root image users.
+-	if os.Geteuid() != 0 {
++	if os.Geteuid() > 0 { // -1 on Windows: Docker Desktop maps bind ownership itself
+ 		configured, err := exec.CommandContext(ctx, "docker", "image", "inspect", "--format", "{{.Config.User}}", image).CombinedOutput()
+ 		if err != nil {
+ 			return fmt.Errorf("inspect sandbox image user: %w: %s", err, strings.TrimSpace(string(configured)))
+@@ -925,11 +930,34 @@ func PrebuildIsolatedImage() {
+ 	}()
+ }
+ 
+-// isolateLocalDriver runs "local" profiles in Docker when
+-// AGENTFLOW_LOCAL_SANDBOX=docker, so no SOP command executes inside a platform
+-// container that can reach the host Docker daemon.
++// desktopHostRuntime is set by the LoopForge desktop shell: every sandbox
++// runs on the host (SQLite, no Docker). Docker/native/bwrap/seatbelt profiles
++// are rewritten to the local driver so the shipped product never starts a container.
++// DesktopHostRuntime reports whether this process must run without Docker
++// (LoopForge desktop shell or AGENTFLOW_DISABLE_DOCKER=1).
++func DesktopHostRuntime() bool { return desktopHostRuntime() }
++
++func desktopHostRuntime() bool {
++	v := strings.TrimSpace(os.Getenv("LOOPFORGE_DESKTOP"))
++	if v == "1" || strings.EqualFold(v, "true") {
++		return true
++	}
++	v = strings.TrimSpace(os.Getenv("AGENTFLOW_DISABLE_DOCKER"))
++	return v == "1" || strings.EqualFold(v, "true")
++}
++
++// isolateLocalDriver remaps sandbox drivers for the current deployment.
++// On the desktop build, all isolation drivers become "local". In Compose,
++// AGENTFLOW_LOCAL_SANDBOX=docker still wraps bare "local" profiles in Docker.
+ func isolateLocalDriver(profile domain.SandboxProfile, dockerfile domain.DockerfileDefinition) (domain.SandboxProfile, domain.DockerfileDefinition) {
+ 	driver := strings.TrimSpace(profile.Driver)
++	if desktopHostRuntime() {
++		switch driver {
++		case "docker", "native", "bwrap", "seatbelt":
++			profile.Driver = "local"
++		}
++		return profile, dockerfile
++	}
+ 	if (driver != "" && driver != "local") || strings.TrimSpace(os.Getenv("AGENTFLOW_LOCAL_SANDBOX")) != "docker" {
+ 		return profile, dockerfile
+ 	}
+diff --git a/internal/runtime/sandbox_docker_desktop_test.go b/internal/runtime/sandbox_docker_desktop_test.go
+new file mode 100644
+index 0000000..423de2a
+--- /dev/null
++++ b/internal/runtime/sandbox_docker_desktop_test.go
+@@ -0,0 +1,35 @@
++package runtime
++
++import (
++	"testing"
++
++	"agentflow/internal/domain"
++)
++
++func TestDesktopHostRuntime(t *testing.T) {
++	t.Setenv("LOOPFORGE_DESKTOP", "")
++	t.Setenv("AGENTFLOW_DISABLE_DOCKER", "")
++	if desktopHostRuntime() {
++		t.Fatal("expected host runtime off by default")
++	}
++	t.Setenv("LOOPFORGE_DESKTOP", "1")
++	if !desktopHostRuntime() || !DesktopHostRuntime() {
++		t.Fatal("LOOPFORGE_DESKTOP=1 should enable host runtime")
++	}
++	t.Setenv("LOOPFORGE_DESKTOP", "")
++	t.Setenv("AGENTFLOW_DISABLE_DOCKER", "true")
++	if !desktopHostRuntime() {
++		t.Fatal("AGENTFLOW_DISABLE_DOCKER=true should enable host runtime")
++	}
++}
++
++func TestIsolateLocalDriverOnDesktop(t *testing.T) {
++	t.Setenv("LOOPFORGE_DESKTOP", "1")
++	t.Setenv("AGENTFLOW_DISABLE_DOCKER", "")
++	for _, driver := range []string{"docker", "native", "bwrap", "seatbelt"} {
++		p, _ := isolateLocalDriver(domain.SandboxProfile{Driver: driver}, domain.DockerfileDefinition{})
++		if p.Driver != "local" {
++			t.Fatalf("desktop should remap %s to local, got %s", driver, p.Driver)
++		}
++	}
++}
