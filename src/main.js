@@ -6,6 +6,7 @@ const net = require('net');
 const crypto = require('crypto');
 const { spawn, execFile } = require('child_process');
 const { runChecks, pathKey } = require('./envcheck');
+const { isAllowedExternalUrl } = require('./external-url');
 
 const isWin = process.platform === 'win32';
 app.setName('LoopForge');
@@ -204,15 +205,15 @@ function createMainWindow() {
     if (server && url.startsWith(server.url)) {
       return { action: 'allow', overrideBrowserWindowOptions: { width: 1280, height: 860, icon: path.join(__dirname, 'icon.png'), autoHideMenuBar: true } };
     }
-    if (/^https?:/i.test(url)) shell.openExternal(url);
+    if (isAllowedExternalUrl(url, { serverUrl: server && server.url })) shell.openExternal(url);
     return { action: 'deny' };
   });
   mainWindow.webContents.on('will-navigate', (e, url) => {
     if (url.startsWith('file://')) return;
     if (server && url.startsWith(server.url)) return;
-    if (/^https?:/i.test(url)) {
+    e.preventDefault();
+    if (isAllowedExternalUrl(url, { serverUrl: server && server.url })) {
       // OAuth flows may legitimately leave the app; open them in the browser.
-      e.preventDefault();
       shell.openExternal(url);
     }
   });
@@ -267,7 +268,7 @@ function buildMenu() {
       submenu: [
         { label: '环境检查…', accelerator: 'CmdOrCtrl+Shift+E', click: () => openEnvCheck(false) },
         { type: 'separator' },
-        { label: '在浏览器中打开', click: () => server && shell.openExternal(server.url) },
+        { label: '在浏览器中打开', click: () => server && isAllowedExternalUrl(server.url, { serverUrl: server.url }) && shell.openExternal(server.url) },
         { label: '打开数据目录', click: () => shell.openPath(DATA) },
         { label: '打开服务日志', click: () => shell.openPath(path.join(LOG_DIR, 'server.log')) },
         { label: '重启服务', click: () => restartServer() },
@@ -333,7 +334,7 @@ ipcMain.handle('env:check', guard(async () => {
 }));
 ipcMain.handle('env:action', guard(async (_e, action) => {
   if (!action || typeof action !== 'object' || !allowedActions.has(JSON.stringify(action))) return false;
-  if (action.type === 'url' && /^https:\/\//.test(action.url)) { await shell.openExternal(action.url); return true; }
+  if (action.type === 'url' && isAllowedExternalUrl(action.url, { serverUrl: server && server.url })) { await shell.openExternal(action.url); return true; }
   if (action.type === 'launch' && action.file && fs.existsSync(action.file)) { spawn(action.file, [], { detached: true, stdio: 'ignore', windowsHide: true }).unref(); return true; }
   if (action.type === 'cmd' && typeof action.command === 'string') {
     // Visible console so the user sees progress, prompts (UAC/winget) and errors.
