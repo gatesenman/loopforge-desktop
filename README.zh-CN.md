@@ -6,7 +6,7 @@
 
 这是社区桌面封装，不是腾讯官方发布的安装包。
 
-[下载 LoopForge-Setup-0.3.9.exe](https://github.com/gatesenman/loopforge-desktop/releases/latest)
+[下载 LoopForge-Setup-0.3.10.exe](https://github.com/gatesenman/loopforge-desktop/releases/latest)
 
 <p align="center">
   <img src="docs/screenshots/startup.png" alt="LoopForge 桌面版启动画面" width="720">
@@ -35,7 +35,7 @@
 
 ## 安装与首次使用
 
-1. 从 [Releases](https://github.com/gatesenman/loopforge-desktop/releases) 下载 `LoopForge-Setup-0.3.9.exe` 并运行（当前用户安装，带开始菜单和桌面快捷方式）。
+1. 从 [Releases](https://github.com/gatesenman/loopforge-desktop/releases) 下载 `LoopForge-Setup-0.3.10.exe` 并运行（当前用户安装，带开始菜单和桌面快捷方式）。
 2. 安装包 **没有代码签名**。Windows SmartScreen 可能会提示，选择「仍要运行」即可。
 3. 第一次打开会先启动本地服务（初始化数据库大约 10–30 秒），然后在同一窗口进入环境检查。
 4. 在登录页创建第一个管理员账号。

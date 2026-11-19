@@ -195,14 +195,14 @@ function splashURL(message) {
 function createMainWindow() {
   mainWindow = new BrowserWindow({
     width: 1440, height: 920, minWidth: 1024, minHeight: 680, show: false,
-    title: 'LoopForge', icon: path.join(__dirname, 'icon.png'), backgroundColor: '#0f1115',
+    title: 'LoopForge', icon: path.join(__dirname, 'icon.ico'), backgroundColor: '#0f1115',
     webPreferences: { contextIsolation: true, sandbox: true, preload: path.join(__dirname, 'preload.js') },
   });
   mainWindow.once('ready-to-show', () => mainWindow.show());
   mainWindow.loadURL(splashURL('正在启动 LoopForge 服务…'));
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
     if (server && url.startsWith(server.url)) {
-      return { action: 'allow', overrideBrowserWindowOptions: { width: 1280, height: 860, icon: path.join(__dirname, 'icon.png'), autoHideMenuBar: true } };
+      return { action: 'allow', overrideBrowserWindowOptions: { width: 1280, height: 860, icon: path.join(__dirname, 'icon.ico'), autoHideMenuBar: true } };
     }
     if (/^https?:/i.test(url)) shell.openExternal(url);
     return { action: 'deny' };

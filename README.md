@@ -6,7 +6,7 @@ A one-installer Windows desktop build of [Tencent/LoopForge](https://github.com/
 
 This is a community desktop package, not an official Tencent release.
 
-[Download LoopForge-Setup-0.3.9.exe](https://github.com/gatesenman/loopforge-desktop/releases/latest)
+[Download LoopForge-Setup-0.3.10.exe](https://github.com/gatesenman/loopforge-desktop/releases/latest)
 
 <p align="center">
   <img src="docs/screenshots/startup.png" alt="LoopForge Desktop starting up" width="720">
@@ -35,7 +35,7 @@ The workbench above is the in-app LoopForge UI (upstream interface) after you cr
 
 ## Install and first run
 
-1. Download `LoopForge-Setup-0.3.9.exe` from [Releases](https://github.com/gatesenman/loopforge-desktop/releases) and run it (per-user install, Start Menu and desktop shortcuts).
+1. Download `LoopForge-Setup-0.3.10.exe` from [Releases](https://github.com/gatesenman/loopforge-desktop/releases) and run it (per-user install, Start Menu and desktop shortcuts).
 2. The installer is **not code-signed**. Windows SmartScreen may warn you — choose **Run anyway**.
 3. On first start, the app boots the local server (about 10–30 seconds while it initializes the database), then shows the environment check in the same window.
 4. Create the first administrator account on the login page.
