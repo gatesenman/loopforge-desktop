@@ -232,7 +232,7 @@ async function runChecks(ctx) {
   };
 }
 
-module.exports = { runChecks, which, pathKey, AGENT_CLIS };
+module.exports = { runChecks, which, pathKey, AGENT_CLIS, npmCmd, versionOf, firstExisting };
 
 if (require.main === module) {
   runChecks({ dataDir: path.join(os.tmpdir(), 'loopforge-envcheck'), serverUrl: process.argv[2] || '' }).then((r) => {
