@@ -31,6 +31,8 @@ node --test test/envcheck.test.js
 
 <p align="center">
   <img src="docs/screenshots/envcheck.png" alt="Built-in environment check" width="720">
+  <p>First-run runtime checklist generated from the same environment check (Linux; Windows NSIS was not built):</p>
+  <img src="docs/screenshots/first-run-checklist.png" alt="LoopForge first-run checklist" width="720">
 </p>
 
 After the first launch, the environment check runs in the same window (not as a second popup). Required tools are marked **Bundled** when the copies inside the installer are used.

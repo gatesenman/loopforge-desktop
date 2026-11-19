@@ -23,6 +23,8 @@
 
 <p align="center">
   <img src="docs/screenshots/envcheck.png" alt="内置环境检查" width="720">
+  <p>同一套环境检查生成的首次运行清单（Linux；Windows 安装包这轮没打）：</p>
+  <img src="docs/screenshots/first-run-checklist.png" alt="LoopForge 首次运行检查清单" width="720">
 </p>
 
 首次启动时，环境检查会在 **同一个窗口** 里进行，不再额外弹出第二个窗口。使用安装包内的 Git / Node / Python 时，会标记为「内置」。
