@@ -1,0 +1,12 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><title>LoopForge</title>
+<meta http-equiv="Content-Security-Policy" content="default-src 'self' 'unsafe-inline' file:">
+<style>
+html,body{height:100%;margin:0;background:#0f1115;color:#e6e8ee;font-family:"Microsoft YaHei UI","PingFang SC",system-ui,sans-serif}
+.c{height:100%;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:18px}
+img{width:88px;height:88px}
+.s{width:36px;height:36px;border:3px solid #2b3140;border-top-color:#3867f4;border-radius:50%;animation:r 1s linear infinite}
+@keyframes r{to{transform:rotate(360deg)}}
+p{color:#9aa3b5;font-size:14px;margin:0}
+</style></head><body><div class="c"><img src="icon.png" alt=""><div class="s"></div><p id="m">正在启动…</p></div>
+<script>const m=new URLSearchParams(location.search).get('m');if(m)document.getElementById('m').textContent=m;</script>
+</body></html>

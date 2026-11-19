@@ -1,0 +1,83 @@
+{
+  "name": "loopforge-desktop",
+  "productName": "LoopForge",
+  "version": "0.3.8",
+  "description": "LoopForge 桌面版：安装即用（内置 Git / Node.js / Python 与本地运行时，无需 Docker）",
+  "author": "LoopForge Desktop packaging (upstream: Tencent/LoopForge, MIT)",
+  "license": "MIT",
+  "main": "src/main.js",
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder --win nsis --x64"
+  },
+  "devDependencies": {
+    "electron": "33.4.11",
+    "electron-builder": "25.1.8"
+  },
+  "build": {
+    "appId": "com.tencent.loopforge.desktop",
+    "productName": "LoopForge",
+    "artifactName": "LoopForge-Setup-${version}.${ext}",
+    "directories": {
+      "output": "dist",
+      "buildResources": "build"
+    },
+    "files": [
+      "src/**/*",
+      "package.json"
+    ],
+    "asar": true,
+    "extraResources": [
+      {
+        "from": "resources/bin",
+        "to": "bin"
+      },
+      {
+        "from": "vendor-dl/git",
+        "to": "runtime/git"
+      },
+      {
+        "from": "vendor-dl/node",
+        "to": "runtime/node"
+      },
+      {
+        "from": "vendor-dl/python",
+        "to": "runtime/python"
+      },
+      {
+        "from": "licenses",
+        "to": "licenses"
+      }
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "build/icon.ico",
+      "signAndEditExecutable": false
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowElevation": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": "always",
+      "createStartMenuShortcut": true,
+      "shortcutName": "LoopForge",
+      "uninstallDisplayName": "LoopForge ${version}",
+      "deleteAppDataOnUninstall": false,
+      "language": "2052",
+      "installerLanguages": [
+        "zh_CN",
+        "en_US"
+      ],
+      "license": "licenses/LICENSE-LoopForge.txt",
+      "include": "build/installer.nsh"
+    }
+  }
+}

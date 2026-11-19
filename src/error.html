@@ -1,0 +1,13 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><title>LoopForge</title>
+<meta http-equiv="Content-Security-Policy" content="default-src 'self' 'unsafe-inline' file:">
+<style>
+body{margin:0;background:#0f1115;color:#e6e8ee;font-family:"Microsoft YaHei UI","PingFang SC",system-ui,sans-serif;padding:40px}
+h1{font-size:20px;color:#ff7a7a}pre{background:#171a21;border:1px solid #2b3140;border-radius:8px;padding:14px;white-space:pre-wrap;max-height:55vh;overflow:auto;font-size:12px;color:#c9cfdb}
+button{background:#3867f4;color:#fff;border:0;border-radius:6px;padding:9px 16px;margin-right:10px;cursor:pointer;font-size:14px}
+button.g{background:#2b3140}
+</style></head><body>
+<h1 id="t">出错了</h1><pre id="d"></pre>
+<p><button onclick="loopforgeDesktop.retry()">重试启动</button><button class="g" onclick="loopforgeDesktop.openEnvCheck()">环境检查</button><button class="g" onclick="loopforgeDesktop.openLogs()">打开日志</button></p>
+<p style="color:#9aa3b5;font-size:13px">常见原因：端口被占用、杀毒软件拦截 agentflow.exe、数据目录无写权限。可在“文件 → 打开数据目录”查看 desktop-config.json 与 logs。</p>
+<script>const q=new URLSearchParams(location.search);document.getElementById('t').textContent=q.get('t')||'出错了';document.getElementById('d').textContent=q.get('d')||'';</script>
+</body></html>

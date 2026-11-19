@@ -1,0 +1,85 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><title>LoopForge 环境检查</title>
+<meta http-equiv="Content-Security-Policy" content="default-src 'self' 'unsafe-inline' file:">
+<style>
+:root{--bg:#0f1115;--card:#171a21;--line:#2b3140;--fg:#e6e8ee;--mut:#9aa3b5;--ok:#3ccf91;--warn:#f5b84b;--bad:#ff7a7a;--pri:#3867f4}
+body{margin:0;background:var(--bg);color:var(--fg);font-family:"Microsoft YaHei UI","PingFang SC",system-ui,sans-serif;font-size:14px}
+header{padding:22px 28px 10px;display:flex;align-items:center;gap:14px}
+header img{width:40px;height:40px}h1{font-size:20px;margin:0}
+.sub{color:var(--mut);font-size:13px;margin-top:4px}
+main{padding:0 28px 100px}
+.banner{border-radius:10px;padding:12px 16px;margin:8px 0 18px;border:1px solid var(--line);background:var(--card)}
+.banner.ok{border-color:#1f6b4c}.banner.warn{border-color:#7a5a1d}
+h2{font-size:14px;color:var(--mut);font-weight:600;margin:20px 0 8px}
+.row{display:grid;grid-template-columns:26px 1fr auto;gap:10px;align-items:center;background:var(--card);border:1px solid var(--line);border-radius:8px;padding:10px 14px;margin-bottom:8px}
+.dot{width:12px;height:12px;border-radius:50%;margin-left:6px}
+.ok .dot{background:var(--ok)}.warn .dot{background:var(--warn)}.missing .dot{background:#59627a}.error .dot{background:var(--bad)}.skip .dot{background:#2b3140}
+.name{font-weight:600}.ver{color:var(--ok);font-weight:400;margin-left:6px;font-size:12px}
+.det{color:var(--mut);font-size:12px;margin-top:2px;word-break:break-all}
+.tag{font-size:11px;padding:1px 6px;border-radius:4px;margin-left:6px;background:#232838;color:var(--mut)}
+button{background:var(--pri);color:#fff;border:0;border-radius:6px;padding:6px 12px;cursor:pointer;font-size:13px;margin-left:6px}
+button.g{background:#2b3140}button:disabled{opacity:.5;cursor:default}
+footer{position:fixed;left:0;right:0;bottom:0;background:#12151b;border-top:1px solid var(--line);padding:12px 28px;display:flex;align-items:center;gap:14px}
+footer .sp{flex:1}label{color:var(--mut);font-size:13px;cursor:pointer}
+code{background:#232838;padding:1px 5px;border-radius:4px;font-size:12px}
+</style></head><body>
+<header><img src="icon.png" alt=""><div><h1>环境检查</h1><div class="sub">LoopForge 桌面版已内置 Git（含 bash）、Node.js 与 Python，数据保存在本机 SQLite。安装后即可使用，无需再装运行时或 Docker。编码 Agent CLI 需自行安装并登录，缺少时仍可浏览平台、运行无需模型的示例 SOP。</div></div></header>
+<main>
+  <div id="banner" class="banner">正在检查…</div>
+  <div id="list"></div>
+</main>
+<footer>
+  <label><input type="checkbox" id="mirror"> 安装 CLI 使用国内 npm 镜像（npmmirror）</label>
+  <span class="sp"></span>
+  <button class="g" id="recheck">重新检查</button>
+  <button id="done">进入 LoopForge</button>
+</footer>
+<script>
+const api = window.loopforgeDesktop;
+const GROUPS = [
+  ['required', '必需（已内置，应全部通过）'],
+  ['agent', '编码 Agent CLI（至少安装一个，用于 AI 对话与 SOP 节点）'],
+  ['recommended', '推荐'],
+  ['optional', '可选'],
+];
+const STATUS = { ok: '通过', warn: '需注意', missing: '未安装', error: '失败', skip: '跳过' };
+function el(tag, attrs, ...kids) { const e = document.createElement(tag); Object.assign(e, attrs || {}); for (const k of kids) if (k != null) e.append(k); return e; }
+async function check() {
+  document.getElementById('recheck').disabled = true;
+  document.getElementById('banner').textContent = '正在检查…';
+  let r;
+  try { r = await api.check(); } catch (e) { document.getElementById('banner').textContent = '检查失败：' + e.message; return; }
+  finally { document.getElementById('recheck').disabled = false; }
+  document.getElementById('mirror').checked = r.info.mirror;
+  const s = r.summary, b = document.getElementById('banner');
+  const msgs = [];
+  msgs.push(s.requiredOk ? '✅ 内置运行时（Git / Node.js / Python / 本地服务）全部就绪，无需另行安装。' : '⚠️ 有内置项未通过，请查看下方红/黄色项目；通常重新安装本应用即可，不必去系统里再装 Git 或 Node。');
+  msgs.push(s.anyAgent ? '✅ 已检测到可用的编码 Agent CLI。' : '💡 编码 Agent CLI 需自行安装并登录（推荐 CodeBuddy 或 Codex）。点击下方“安装”将使用内置 npm，完成后点“重新检查”。不装也能浏览平台、运行无需模型的示例 SOP。');
+  b.className = 'banner ' + (s.requiredOk ? 'ok' : 'warn');
+  b.replaceChildren(...msgs.map((m) => el('div', { textContent: m })), el('div', { className: 'det', textContent: '数据目录：' + r.info.dataDir }));
+  const list = document.getElementById('list'); list.replaceChildren();
+  for (const [lvl, title] of GROUPS) {
+    const items = r.results.filter((x) => x.level === lvl);
+    if (!items.length) continue;
+    list.append(el('h2', { textContent: title }));
+    for (const x of items) {
+      const left = el('div', {},
+        el('div', {}, el('span', { className: 'name', textContent: x.name }), x.version ? el('span', { className: 'ver', textContent: x.version }) : null, el('span', { className: 'tag', textContent: STATUS[x.status] || x.status }), x.bundled ? el('span', { className: 'tag', textContent: '内置' }) : null),
+        el('div', { className: 'det', textContent: [x.detail, x.purpose && '用途：' + x.purpose].filter(Boolean).join(' · ') }),
+        x.path ? el('div', { className: 'det', textContent: x.path }) : null);
+      const right = el('div');
+      for (const a of x.actions || []) {
+        const btn = el('button', { className: a.type === 'url' ? 'g' : '', textContent: a.label, title: a.command || a.url || a.file || '' });
+        btn.onclick = async () => { btn.disabled = true; const ok = await api.action(a); btn.disabled = false; if (!ok) alert('无法执行该操作'); };
+        right.append(btn);
+      }
+      list.append(el('div', { className: 'row ' + x.status }, el('div', { className: 'dot' }), left, right));
+    }
+  }
+}
+document.getElementById('recheck').onclick = check;
+document.getElementById('done').onclick = () => api.done();
+document.getElementById('mirror').onchange = async (e) => { await api.setMirror(e.target.checked); check(); };
+if (new URLSearchParams(location.search).get('first') !== '1') document.getElementById('done').textContent = '关闭';
+check();
+</script>
+</body></html>
