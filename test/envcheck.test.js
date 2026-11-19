@@ -70,3 +70,32 @@ describe("envcheck helpers", () => {
     }
   });
 });
+
+const { buildChecklist, renderChecklistPage } = require("../src/checklist");
+
+describe("first-run checklist", () => {
+  it("writes a status report and next-steps page from env checks", async () => {
+    const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), "loopforge-checklist-"));
+    try {
+      const report = await runChecks({
+        env: process.env,
+        dataDir,
+        gitDir: "",
+        nodeDir: "",
+        pythonDir: "",
+        serverUrl: "",
+        mirror: false,
+      });
+      const checklist = buildChecklist(report);
+      assert.match(checklist.title, /first-run/);
+      assert.equal(Array.isArray(checklist.nextSteps), true);
+      assert.ok(checklist.nextSteps.length >= 1);
+      const html = renderChecklistPage(checklist);
+      assert.match(html, /<h1>/);
+      assert.match(html, /Next steps/);
+      assert.match(html, /Environment/);
+    } finally {
+      fs.rmSync(dataDir, { recursive: true, force: true });
+    }
+  });
+});

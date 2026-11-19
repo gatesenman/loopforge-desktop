@@ -23,6 +23,8 @@
 
 <p align="center">
   <img src="docs/screenshots/envcheck.png" alt="内置环境检查" width="720">
+  <p>同一套环境检查生成的首次运行清单（Linux；Windows 安装包这轮没打）：</p>
+  <img src="docs/screenshots/first-run-checklist.png" alt="LoopForge 首次运行检查清单" width="720">
 </p>
 
 首次启动时，环境检查会在 **同一个窗口** 里进行，不再额外弹出第二个窗口。使用安装包内的 Git / Node / Python 时，会标记为「内置」。
@@ -74,3 +76,11 @@ npm run dist
 ## 许可
 
 上游 LoopForge 为 MIT。安装包还包含 Git for Windows、Node.js、CPython 以及 Electron/Chromium 的各自许可，详见 `licenses/` 与程序内「帮助 → 开源许可与第三方声明」。本桌面封装未改变上游许可证。
+
+## 首次运行检查清单
+
+桌面外壳可以根据环境检查写出状态报告和「下一步」页面，不必在 Linux 上构建 Windows 安装包。
+
+```bash
+node --test test/envcheck.test.js
+```

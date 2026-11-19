@@ -12,6 +12,14 @@ This is a community desktop package, not an official Tencent release.
   <img src="docs/screenshots/startup.png" alt="LoopForge Desktop starting up" width="720">
 </p>
 
+## First-run checklist
+
+The desktop shell can write a bundled-runtime status report and a next-steps page from `src/checklist.js`, without building a Windows installer.
+
+```bash
+node --test test/envcheck.test.js
+```
+
 ## What you get
 
 | | Desktop build |
@@ -23,6 +31,8 @@ This is a community desktop package, not an official Tencent release.
 
 <p align="center">
   <img src="docs/screenshots/envcheck.png" alt="Built-in environment check" width="720">
+  <p>First-run runtime checklist generated from the same environment check (Linux; Windows NSIS was not built):</p>
+  <img src="docs/screenshots/first-run-checklist.png" alt="LoopForge first-run checklist" width="720">
 </p>
 
 After the first launch, the environment check runs in the same window (not as a second popup). Required tools are marked **Bundled** when the copies inside the installer are used.
