@@ -1,14 +1,16 @@
 {
   "name": "loopforge-desktop",
   "productName": "LoopForge",
-  "version": "0.3.10",
+  "version": "0.4.0",
   "description": "LoopForge 桌面版：安装即用（内置 Git / Node.js / Python 与本地运行时，无需 Docker）",
   "author": "LoopForge Desktop packaging (upstream: Tencent/LoopForge, MIT)",
   "license": "MIT",
   "main": "src/main.js",
   "scripts": {
     "start": "electron .",
-    "dist": "electron-builder --win nsis --x64"
+    "fetch-vendors": "node scripts/fetch-vendors.js",
+    "build-bins": "node scripts/build-loopforge-bins.js",
+    "dist": "electron-builder --win nsis --x64 --publish never"
   },
   "devDependencies": {
     "electron": "33.4.11",
@@ -30,7 +32,12 @@
     "extraResources": [
       {
         "from": "resources/bin",
-        "to": "bin"
+        "to": "bin",
+        "filter": [
+          "**/*",
+          "!*-linux-*",
+          "!loopforge-account*"
+        ]
       },
       {
         "from": "vendor-dl/git",
@@ -80,9 +87,21 @@
       "installerIcon": "build/icon.ico",
       "uninstallerIcon": "build/icon.ico",
       "installerHeaderIcon": "build/icon.ico"
+    },
+    "publish": {
+      "provider": "github",
+      "owner": "gatesenman",
+      "repo": "loopforge-desktop"
     }
   },
   "allowScripts": {
     "electron@33.4.11": true
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/gatesenman/loopforge-desktop.git"
+  },
+  "dependencies": {
+    "electron-updater": "6.3.9"
   }
 }

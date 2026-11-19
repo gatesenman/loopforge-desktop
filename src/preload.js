@@ -9,4 +9,9 @@ contextBridge.exposeInMainWorld('loopforgeDesktop', {
   retry: () => ipcRenderer.invoke('app:retry'),
   openLogs: () => ipcRenderer.invoke('app:openLogs'),
   openEnvCheck: () => ipcRenderer.invoke('app:openEnv'),
+  onActionLog: (cb) => {
+    const fn = (_e, data) => cb(data);
+    ipcRenderer.on('env:action-log', fn);
+    return () => ipcRenderer.removeListener('env:action-log', fn);
+  },
 });

@@ -8,6 +8,6 @@ button.g{background:#2b3140}
 </style></head><body>
 <h1 id="t">出错了</h1><pre id="d"></pre>
 <p><button onclick="loopforgeDesktop.retry()">重试启动</button><button class="g" onclick="loopforgeDesktop.openEnvCheck()">环境检查</button><button class="g" onclick="loopforgeDesktop.openLogs()">打开日志</button></p>
-<p style="color:#9aa3b5;font-size:13px">常见原因：端口被占用、杀毒软件拦截 agentflow.exe、数据目录无写权限。可在“文件 → 打开数据目录”查看 desktop-config.json 与 logs。</p>
+<p style="color:#9aa3b5;font-size:13px">应用会在服务崩溃时自动重启几次。若仍失败，常见原因是端口被占用、杀毒软件拦截 agentflow.exe、或数据目录无写权限。可在“文件 → 导出诊断包”或“打开数据目录”查看 logs（不会包含密钥）。</p>
 <script>const q=new URLSearchParams(location.search);document.getElementById('t').textContent=q.get('t')||'出错了';document.getElementById('d').textContent=q.get('d')||'';</script>
 </body></html>

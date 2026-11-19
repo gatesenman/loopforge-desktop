@@ -190,7 +190,7 @@ async function runChecks(ctx) {
     checkBundledOrPath({
       id: 'sh', name: 'Bash / sh', level: 'required', purpose: '执行 SOP 脚本节点与 Agent 命令', bin: 'sh',
       args: ['-c', 'echo sh-ok'],
-      bundledPaths: bundledCandidates(gitDir, isWin ? ['usr/bin/sh.exe', 'usr/bin/bash.exe', 'bin/sh.exe'] : ['bin/sh']),
+      bundledPaths: bundledCandidates(gitDir, isWin ? ['ucrt64/bin/sh.exe', 'ucrt64/bin/ash.exe', 'mingw64/bin/sh.exe', 'usr/bin/sh.exe', 'usr/bin/bash.exe', 'bin/sh.exe'] : ['bin/sh']),
     }, env),
     checkBundledOrPath({
       id: 'node', name: 'Node.js', level: 'required', purpose: '安装与运行编码 Agent CLI', bin: 'node',
@@ -232,7 +232,14 @@ async function runChecks(ctx) {
   };
 }
 
-module.exports = { runChecks, which, pathKey, AGENT_CLIS };
+function requiredReady(report) {
+  if (report && report.summary) return !!report.summary.requiredOk;
+  const list = Array.isArray(report) ? report : [];
+  const required = list.filter((r) => r.level === 'required');
+  return required.length > 0 && required.every((r) => r.status === 'ok');
+}
+
+module.exports = { runChecks, which, pathKey, AGENT_CLIS, requiredReady, npmCliJs, firstExisting, bundledCandidates };
 
 if (require.main === module) {
   runChecks({ dataDir: path.join(os.tmpdir(), 'loopforge-envcheck'), serverUrl: process.argv[2] || '' }).then((r) => {

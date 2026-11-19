@@ -6,7 +6,7 @@ body{margin:0;background:var(--bg);color:var(--fg);font-family:"Microsoft YaHei 
 header{padding:22px 28px 10px;display:flex;align-items:center;gap:14px}
 header img{width:40px;height:40px}h1{font-size:20px;margin:0}
 .sub{color:var(--mut);font-size:13px;margin-top:4px}
-main{padding:0 28px 100px}
+main{padding:0 28px 160px}
 .banner{border-radius:10px;padding:12px 16px;margin:8px 0 18px;border:1px solid var(--line);background:var(--card)}
 .banner.ok{border-color:#1f6b4c}.banner.warn{border-color:#7a5a1d}
 h2{font-size:14px;color:var(--mut);font-weight:600;margin:20px 0 8px}
@@ -18,14 +18,18 @@ h2{font-size:14px;color:var(--mut);font-weight:600;margin:20px 0 8px}
 .tag{font-size:11px;padding:1px 6px;border-radius:4px;margin-left:6px;background:#232838;color:var(--mut)}
 button{background:var(--pri);color:#fff;border:0;border-radius:6px;padding:6px 12px;cursor:pointer;font-size:13px;margin-left:6px}
 button.g{background:#2b3140}button:disabled{opacity:.5;cursor:default}
+#logwrap{display:none;margin:16px 0 0;background:#0c0e13;border:1px solid var(--line);border-radius:8px;padding:10px 12px}
+#logwrap h3{margin:0 0 8px;font-size:13px;color:var(--mut);font-weight:600}
+#log{margin:0;max-height:180px;overflow:auto;white-space:pre-wrap;word-break:break-all;font-size:12px;color:#c9cfdb;font-family:ui-monospace,Consolas,monospace}
 footer{position:fixed;left:0;right:0;bottom:0;background:#12151b;border-top:1px solid var(--line);padding:12px 28px;display:flex;align-items:center;gap:14px}
 footer .sp{flex:1}label{color:var(--mut);font-size:13px;cursor:pointer}
 code{background:#232838;padding:1px 5px;border-radius:4px;font-size:12px}
 </style></head><body>
-<header><img src="icon.png" alt=""><div><h1>环境检查</h1><div class="sub">LoopForge 桌面版已内置 Git（含 bash）、Node.js 与 Python，数据保存在本机 SQLite。安装后即可使用，无需再装运行时或 Docker。编码 Agent CLI 需自行安装并登录，缺少时仍可浏览平台、运行无需模型的示例 SOP。</div></div></header>
+<header><img src="icon.png" alt=""><div><h1>环境检查</h1><div class="sub">LoopForge 桌面版已内置 Git（含 sh/bash）、Node.js 与 Python，数据保存在本机 SQLite。必需项通过时会直接进入工作台；此页主要用于查看状态，或安装可选的编码 Agent CLI。安装在应用内完成，不会弹出命令行窗口。</div></div></header>
 <main>
   <div id="banner" class="banner">正在检查…</div>
   <div id="list"></div>
+  <div id="logwrap"><h3>安装输出</h3><pre id="log"></pre></div>
 </main>
 <footer>
   <label><input type="checkbox" id="mirror"> 安装 CLI 使用国内 npm 镜像（npmmirror）</label>
@@ -37,12 +41,20 @@ code{background:#232838;padding:1px 5px;border-radius:4px;font-size:12px}
 const api = window.loopforgeDesktop;
 const GROUPS = [
   ['required', '必需（已内置，应全部通过）'],
-  ['agent', '编码 Agent CLI（至少安装一个，用于 AI 对话与 SOP 节点）'],
+  ['agent', '编码 Agent CLI（可选，任选其一即可；不安装也能浏览平台、运行无需模型的示例 SOP）'],
   ['recommended', '推荐'],
   ['optional', '可选'],
 ];
 const STATUS = { ok: '通过', warn: '需注意', missing: '未安装', error: '失败', skip: '跳过' };
 function el(tag, attrs, ...kids) { const e = document.createElement(tag); Object.assign(e, attrs || {}); for (const k of kids) if (k != null) e.append(k); return e; }
+const logEl = document.getElementById('log');
+const logWrap = document.getElementById('logwrap');
+function showLog(text) {
+  logWrap.style.display = 'block';
+  if (text) logEl.textContent += text;
+  logEl.scrollTop = logEl.scrollHeight;
+}
+if (api.onActionLog) api.onActionLog((d) => { if (d && d.text) showLog(d.text); });
 async function check() {
   document.getElementById('recheck').disabled = true;
   document.getElementById('banner').textContent = '正在检查…';
@@ -53,7 +65,7 @@ async function check() {
   const s = r.summary, b = document.getElementById('banner');
   const msgs = [];
   msgs.push(s.requiredOk ? '✅ 内置运行时（Git / Node.js / Python / 本地服务）全部就绪，无需另行安装。' : '⚠️ 有内置项未通过，请查看下方红/黄色项目；通常重新安装本应用即可，不必去系统里再装 Git 或 Node。');
-  msgs.push(s.anyAgent ? '✅ 已检测到可用的编码 Agent CLI。' : '💡 编码 Agent CLI 需自行安装并登录（推荐 CodeBuddy 或 Codex）。点击下方“安装”将使用内置 npm，完成后点“重新检查”。不装也能浏览平台、运行无需模型的示例 SOP。');
+  msgs.push(s.anyAgent ? '✅ 已检测到可用的编码 Agent CLI。' : '💡 编码 Agent CLI 需自行安装并登录（推荐 CodeBuddy 或 Codex）。点击下方“安装”将使用内置 npm，在本页显示进度，完成后点“重新检查”。不装也能浏览平台、运行无需模型的示例 SOP。');
   b.className = 'banner ' + (s.requiredOk ? 'ok' : 'warn');
   b.replaceChildren(...msgs.map((m) => el('div', { textContent: m })), el('div', { className: 'det', textContent: '数据目录：' + r.info.dataDir }));
   const list = document.getElementById('list'); list.replaceChildren();
@@ -69,7 +81,19 @@ async function check() {
       const right = el('div');
       for (const a of x.actions || []) {
         const btn = el('button', { className: a.type === 'url' ? 'g' : '', textContent: a.label, title: a.command || a.url || a.file || '' });
-        btn.onclick = async () => { btn.disabled = true; const ok = await api.action(a); btn.disabled = false; if (!ok) alert('无法执行该操作'); };
+        btn.onclick = async () => {
+          btn.disabled = true;
+          if (a.type === 'cmd') { logEl.textContent = ''; showLog(''); }
+          const result = await api.action(a);
+          const ok = result === true || (result && result.ok);
+          btn.disabled = false;
+          if (!ok) {
+            const detail = result && result.out ? '\n' + result.out : '';
+            alert('无法完成该操作' + detail);
+          } else if (a.type === 'cmd') {
+            showLog('\n完成，请点击“重新检查”。\n');
+          }
+        };
         right.append(btn);
       }
       list.append(el('div', { className: 'row ' + x.status }, el('div', { className: 'dot' }), left, right));

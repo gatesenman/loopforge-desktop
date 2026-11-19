@@ -6,7 +6,7 @@
 
 这是社区桌面封装，不是腾讯官方发布的安装包。
 
-[下载 LoopForge-Setup-0.3.10.exe](https://github.com/gatesenman/loopforge-desktop/releases/latest)
+[下载 LoopForge-Setup-0.4.0.exe](https://github.com/gatesenman/loopforge-desktop/releases/latest)
 
 <p align="center">
   <img src="docs/screenshots/startup.png" alt="LoopForge 桌面版启动画面" width="720">
@@ -14,18 +14,20 @@
 
 ## 你能直接用到什么
 
-| | 桌面版 |
+| | 桌面版 0.4.0 |
 | --- | --- |
 | 运行方式 | 本机进程 + `%APPDATA%\LoopForge` 下的 SQLite |
-| 已内置 | Git for Windows（含 bash/sh）、Node.js 22（含 npm）、Python 3.11 |
+| 已内置 | Git for Windows **MinGit-busybox**（git 与 sh/bash）、Node.js 22（含 npm）、Python 3.11 |
 | Docker | 不使用、不依赖。应用不会启动或探测 Docker，因此不会弹出黑色控制台窗口。 |
-| 编码 Agent CLI | 可选。在环境检查页用内置 npm 安装，再到设置里登录。 |
+| 启动 | 内置必需项会静默检查；通过后直接进入工作台，不再强制走环境检查向导。 |
+| 更新 | 在应用内对照 GitHub Releases 检查（下载后提示重启安装，不会在工作中途自动重启）。 |
+| 编码 Agent CLI | 可选。在「文件 → 环境检查」里用内置 npm 安装，再到设置里登录。安装在应用内完成，不弹出命令行窗口。 |
 
 <p align="center">
   <img src="docs/screenshots/envcheck.png" alt="内置环境检查" width="720">
 </p>
 
-首次启动时，环境检查会在 **同一个窗口** 里进行，不再额外弹出第二个窗口。使用安装包内的 Git / Node / Python 时，会标记为「内置」。
+环境检查只会在必需项失败时自动出现，或通过菜单（`Ctrl+Shift+E`）打开。登录后可能一次性询问是否安装可选 CLI，可以跳过。
 
 <p align="center">
   <img src="docs/screenshots/workbench.png" alt="桌面应用中的 LoopForge 工作台" width="720">
@@ -35,14 +37,16 @@
 
 ## 安装与首次使用
 
-1. 从 [Releases](https://github.com/gatesenman/loopforge-desktop/releases) 下载 `LoopForge-Setup-0.3.10.exe` 并运行（当前用户安装，带开始菜单和桌面快捷方式）。
-2. 安装包 **没有代码签名**。Windows SmartScreen 可能会提示，选择「仍要运行」即可。
-3. 第一次打开会先启动本地服务（初始化数据库大约 10–30 秒），然后在同一窗口进入环境检查。
+1. 从 [Releases](https://github.com/gatesenman/loopforge-desktop/releases) 下载 `LoopForge-Setup-0.4.0.exe` 并运行（当前用户安装，带开始菜单和桌面快捷方式）。
+2. 安装包 **没有代码签名**。Windows SmartScreen 可能会提示，选择「仍要运行」即可。应用内更新之后也可能再次出现该提示。
+3. 第一次打开会先启动本地服务（初始化数据库大约 10–30 秒）。内置运行时正常时，会直接进入登录 / 工作台。
 4. 在登录页创建第一个管理员账号。
 5. 可先在「LoopForge 体验项目」里运行无需模型密钥的示例 SOP（`welcome-workflow`）。
 6. 若要使用 AI 对话或交付类 SOP：在环境检查里安装至少一个编码 Agent CLI（推荐 CodeBuddy 或 Codex），在个人设置中登录或填写密钥，再点「重新检查」。
 
-之后可随时通过「文件 → 环境检查」打开。数据保存在 `%APPDATA%\LoopForge`，卸载时默认保留。
+数据保存在 `%APPDATA%\LoopForge`，卸载时默认保留。可通过「文件 → 导出诊断包」（日志、版本、环境检查结果，不含密钥）或「文件 → 备份数据目录」打包。会话密钥在可用时使用 Windows DPAPI 保护。
+
+本地服务由守护逻辑监管：异常退出会按间隔自动重启几次，仍失败再进入错误页。退出应用时会尽量优雅停止服务，强制结束只作为兜底。
 
 ## 环境检查覆盖范围
 
@@ -59,17 +63,32 @@
 
 默认且唯一的运行模式是 **本机执行**。上游依赖 Docker 隔离沙箱的能力在此桌面版中不可用或会减弱：容器隔离、基于镜像的可复现环境、沙箱里预装的 Linux 工具链，以及任何必须与 Docker 守护进程通信的功能。请只在受信任的仓库和任务上使用本机执行。
 
+内置 shell 来自官方 MinGit-busybox 的 BusyBox，不是完整的 Git Bash / MSYS2 用户态。常见 POSIX SOP 脚本可以运行；依赖 Perl、Git GUI 或不常见 GNU 扩展的脚本可能无法使用。
+
 ## 从源码打包
 
-本仓库存放 Electron / NSIS 桌面封装源码。体积较大的运行时（`vendor-dl/`、`resources/bin/`）不放入 Git，而是打进安装包。
+本仓库存放 Electron / NSIS 桌面封装源码。体积较大的运行时（`vendor-dl/`、`resources/bin/`）不放入 Git，而是打进安装包。供应商锁定、MinGit 取舍、CI 与自动更新产物说明见 [docs/PACKAGING.md](docs/PACKAGING.md)。
 
 ```bash
-# 准备好 Windows 平台程序以及便携版 Git / Node / Python 后：
-npm install
+node scripts/fetch-vendors.js
+node scripts/build-loopforge-bins.js   # 或设置 LOOPFORGE_SRC 指向已打补丁的 LoopForge 源码
+npm ci
 npm run dist
 ```
 
-生成文件为 `dist/LoopForge-Setup-<version>.exe`。
+生成文件为 `dist/LoopForge-Setup-<version>.exe`，以及供 GitHub Releases 自动更新使用的 `latest.yml`。
+
+## 更新说明
+
+### 0.4.0
+
+- 运行时瘦身：用官方 Git for Windows MinGit-busybox 替换完整便携版 Git；安装包只包含 Windows 平台程序（去掉 Linux 的 runner/gate-mcp，以及默认不需要的 `loopforge-account.exe`）。NSIS 安装包约 **166 MB**（174,038,056 字节；0.3.10 约为 246 MB）。
+- 静默启动：内置 Git / Node / Python 与本地服务通过后直接进工作台；可选 Agent CLI 不再挡住首次启动，登录后的引导可跳过。
+- 服务守护：HTTP 健康检查、有限次崩溃重启、退出时优雅停止。
+- 在应用内安装 CLI（隐藏进程，不再弹出 `cmd` 窗口）。
+- 通过 GitHub Releases 自动更新（`electron-updater`，下载后提示重启）。默认构建未签名。
+- 在可用时用 Windows DPAPI 保护会话密钥。文件菜单提供诊断包导出与数据目录备份。
+- 可复现的供应商锁定文件，以及 Windows CI 打包工作流。
 
 ## 许可
 
