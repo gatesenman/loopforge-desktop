@@ -90,6 +90,11 @@ The output is `dist/LoopForge-Setup-<version>.exe` plus `latest.yml` (for GitHub
 - Session secret protected with Windows DPAPI when available. Allowlisted diagnostic zip from the File menu; raw logs and credential-bearing data are excluded. Python includes pinned pip offline (no get-pip bootstrap).
 - Reproducible vendor lockfile and Windows CI workflow.
 
+
+## Contributing
+
+Issues and pull requests are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md). Please report vulnerabilities privately via [SECURITY.md](SECURITY.md). This project follows [CODE_OF_CONDUCT.md](CODE_OF_CONDUCT.md).
+
 ## License
 
 Upstream LoopForge is MIT. The installer also includes Git for Windows, Node.js, CPython, and Electron/Chromium under their own licenses — see `licenses/` and **Help → Open-source licenses**. This packaging does not change the upstream license.
