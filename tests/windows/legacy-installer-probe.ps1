@@ -16,7 +16,11 @@ foreach ($variant in @(@{name='simple';args="/S /D=$base\App"},@{name='spaces';a
     Start-Sleep -Seconds 5
     Add-Type -AssemblyName System.Windows.Forms
     Add-Type -AssemblyName System.Drawing
-    $bounds=[Windows.Forms.Screen]::PrimaryScreen.Bounds
+    Add-Type -AssemblyName UIAutomationClient
+    $p.Refresh()
+    $window=[System.Windows.Automation.AutomationElement]::FromHandle($p.MainWindowHandle)
+    $rect=$window.Current.BoundingRectangle
+    $bounds=New-Object Drawing.Rectangle([int]$rect.X,[int]$rect.Y,[int]$rect.Width,[int]$rect.Height)
     $bitmap=New-Object Drawing.Bitmap($bounds.Width,$bounds.Height)
     $graphics=[Drawing.Graphics]::FromImage($bitmap)
     $graphics.CopyFromScreen($bounds.Location,[Drawing.Point]::Empty,$bounds.Size)

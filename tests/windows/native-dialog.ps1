@@ -12,7 +12,13 @@ while ((Get-Date) -lt $until) {
   $buttons = [System.Windows.Automation.AutomationElement]::RootElement.FindAll([System.Windows.Automation.TreeScope]::Descendants, $condition)
   foreach ($button in $buttons) {
     if ($button.Current.Name -eq '稍后再说') {
-      $bounds = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
+      # Capture only the real dialog, never the runner desktop/host console.
+      $node = $button
+      $walker = [System.Windows.Automation.TreeWalker]::ControlViewWalker
+      while ($node -and $node.Current.ControlType -ne [System.Windows.Automation.ControlType]::Window) { $node = $walker.GetParent($node) }
+      if (!$node) { throw 'Native dialog window ancestor missing' }
+      $rect = $node.Current.BoundingRectangle
+      $bounds = New-Object System.Drawing.Rectangle([int]$rect.X,[int]$rect.Y,[int]$rect.Width,[int]$rect.Height)
       $bitmap = New-Object System.Drawing.Bitmap($bounds.Width, $bounds.Height)
       $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
       $graphics.CopyFromScreen($bounds.Location, [System.Drawing.Point]::Empty, $bounds.Size)
