@@ -16,13 +16,14 @@ const TEMP = path.join(process.env.RUNNER_TEMP || process.env.TEMP, 'LoopForge I
 const INSTALL = path.join(TEMP, 'Installed App With Spaces');
 const DATA = path.join(process.env.APPDATA, 'LoopForge');
 const version = require('../../package.json').version;
+const skipLegacy = process.env.LOOPFORGE_ACCEPTANCE_SKIP_LEGACY === '1';
 const currentInstaller = path.join(ROOT, 'dist', `LoopForge-Setup-${version}.exe`);
 const oldInstaller = path.join(TEMP, 'LoopForge-Setup-0.4.0.exe');
 const executablePath = path.join(INSTALL, 'LoopForge.exe');
-const result = { buildRun:process.env.LOOPFORGE_ACCEPTANCE_BUILD_RUN || process.env.GITHUB_RUN_ID, testCommit:process.env.GITHUB_SHA, version, nativeWindows: true, installedBinary: true, mockedProviders: false, checks: [], limitations: [
+const result = { buildRun:process.env.LOOPFORGE_ACCEPTANCE_BUILD_RUN || process.env.GITHUB_RUN_ID, testCommit:process.env.GITHUB_SHA, version, nativeWindows: true, installedBinary: false, mockedProviders: false, checks: [], limitations: [
   'NSIS silent installation tested; interactive installer GUI and SmartScreen not tested.',
   'External coding-agent CLI installation/login and paid AI execution not tested; no provider credentials used.',
-  '0.4.0 to current in-place installer upgrade tested; 0.3.10 and live auto-update download/restart not tested.',
+  '0.3.10 and live auto-update download/restart not tested. Only completed assertions establish upgrade coverage.',
   'Console windows sampled every 20ms; sub-sampling-duration flashes cannot be excluded.',
 ] };
 let app, page, origin, monitor, stage = 'initialization', runId, projectId;
@@ -36,7 +37,7 @@ function sha(file) { return crypto.createHash('sha256').update(fs.readFileSync(f
 function ps(file, args = []) { return exec('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', file, ...args], { windowsHide: true, timeout: 240000 }); }
 async function shot(name) { await page.screenshot({ path: path.join(OUT, name + '.png') }); }
 async function install(file) {
-  await ps(path.join(__dirname,'install.ps1'), ['-Installer',file,'-Destination',INSTALL]);
+  await ps(path.join(__dirname,'install.ps1'), ['-Installer',file,'-Destination',INSTALL,'-WaitSeconds',file===oldInstaller?'45':'120']);
   assert.ok(fs.existsSync(executablePath), 'Installed executable missing');
   assert.ok(fs.existsSync(path.join(INSTALL, 'resources/app.asar')), 'Installed app.asar missing');
 }
@@ -62,10 +63,16 @@ async function launch(expectedVersion) {
     const report=await page.evaluate(()=>window.loopforgeDesktop.check());
     result.blockingRequiredChecks=report.results.filter(r=>r.level==='required').map(({id,status,name,detail,version})=>({id,status,name,detail,version}));
     await shot('blocking-required-checks');
-    assert.fail('Installed required checks did not pass: '+result.blockingRequiredChecks.filter(r=>r.status!=='ok').map(r=>r.id+': '+r.detail).join('; '));
+    const failed=result.blockingRequiredChecks.filter(r=>r.status!=='ok');
+    if(expectedVersion==='0.4.0' && failed.every(r=>r.id==='npm')) {
+      result.legacyBlockingRequiredChecks=result.blockingRequiredChecks; delete result.blockingRequiredChecks;
+      result.limitations.push('Legacy 0.4.0 omits bundled npm dependencies: explicitly continued through its real environment-check UI solely to seed migration data. Candidate startup must pass without this waiver.');
+      await page.locator('#done').click(); await page.waitForURL(/^http:\/\/127\.0\.0\.1:\d+\//);
+    } else assert.fail('Installed required checks did not pass: '+failed.map(r=>r.id+': '+r.detail).join('; '));
   }
   origin = new URL(page.url()).origin;
   assert.ok(!page.url().includes('envcheck'), 'Required checks must not open blocking wizard');
+  result.installedBinary=true;
   pass('installed GUI launch ' + expectedVersion, { packaged: metadata.packaged });
 }
 async function api(url) {
@@ -107,12 +114,18 @@ async function main() {
   fs.mkdirSync(path.join(TEMP, 'trap'));
   fs.copyFileSync(path.join(ROOT, '.smoke/LoopForge Runtime With Spaces/probe trap/docker.exe'), path.join(TEMP, 'trap/docker.exe'));
   stage = 'download pinned previous installer';
-  const response = await fetch('https://github.com/gatesenman/loopforge-desktop/releases/download/v0.4.0/LoopForge-Setup-0.4.0.exe');
-  assert.equal(response.status, 200); fs.writeFileSync(oldInstaller, Buffer.from(await response.arrayBuffer()));
-  assert.equal(sha(oldInstaller), 'cf6cc71b2141aa59d0aaaef5b888d9c717ebfae021aefa6bda6ead0f85aa54fd');
+  if(!skipLegacy) {
+    const response = await fetch('https://github.com/gatesenman/loopforge-desktop/releases/download/v0.4.0/LoopForge-Setup-0.4.0.exe');
+    assert.equal(response.status, 200); fs.writeFileSync(oldInstaller, Buffer.from(await response.arrayBuffer()));
+    assert.equal(sha(oldInstaller), 'cf6cc71b2141aa59d0aaaef5b888d9c717ebfae021aefa6bda6ead0f85aa54fd');
+  }
   result.installer = { file: path.basename(currentInstaller), sha256: sha(currentInstaller), bytes: fs.statSync(currentInstaller).size };
   stage = 'silent install previous release';
-  try {
+  if(skipLegacy) {
+    baselineVersion=version;
+    result.limitations.push('Fresh candidate and same-version repair mode: no legacy-version migration is claimed by this run.');
+    await install(currentInstaller); pass('candidate NSIS fresh per-user installation in path with spaces');
+  } else try {
     try { await install(oldInstaller); }
     catch (error) {
       result.legacyInstallerFirstAttemptError=String(error.message).slice(0,1500);

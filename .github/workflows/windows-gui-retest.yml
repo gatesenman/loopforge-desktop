@@ -6,12 +6,21 @@ on:
         description: Successful packaging run containing LoopForge-Setup artifact
         required: true
         type: string
+      legacy_baseline:
+        description: Seed real 0.4.0 data and attempt upgrade (known legacy installer defects)
+        type: boolean
+        default: false
+      windows_version:
+        description: Disposable native Windows runner
+        type: choice
+        default: windows-latest
+        options: [windows-latest, windows-2022]
 permissions:
   contents: read
   actions: read
 jobs:
   installed-gui:
-    runs-on: windows-latest
+    runs-on: ${{ inputs.windows_version }}
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
@@ -40,6 +49,7 @@ jobs:
       - name: Real installed GUI acceptance
         env:
           LOOPFORGE_ACCEPTANCE_BUILD_RUN: ${{ inputs.build_run }}
+          LOOPFORGE_ACCEPTANCE_SKIP_LEGACY: ${{ inputs.legacy_baseline && '0' || '1' }}
         run: node tests/windows/installed-e2e.cjs
       - uses: actions/upload-artifact@v4
         if: always()

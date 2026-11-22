@@ -60,6 +60,8 @@ jobs:
 
       - name: Installed Windows Electron GUI acceptance (synthetic data, no provider)
         timeout-minutes: 15
+        env:
+          LOOPFORGE_ACCEPTANCE_SKIP_LEGACY: '1'
         run: node tests/windows/installed-e2e.cjs
 
       - name: Upload GUI acceptance evidence (no raw logs, credentials or databases)
