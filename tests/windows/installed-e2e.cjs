@@ -26,11 +26,12 @@ const result = { buildRun:process.env.LOOPFORGE_ACCEPTANCE_BUILD_RUN || process.
   '0.3.10 and live auto-update download/restart not tested. Only completed assertions establish upgrade coverage.',
   'Console windows sampled every 20ms; sub-sampling-duration flashes cannot be excluded.',
 ] };
-let app, page, origin, monitor, stage = 'initialization', runId, projectId;
+let app, page, origin, monitor, stage=note('initialization'), runId, projectId;
 let baselineVersion = '0.4.0';
 let authenticated = false;
 let workspaceFiles = [];
 const password = 'Acceptance-' + crypto.randomBytes(20).toString('hex') + '!';
+function note(value) { console.log('STAGE', value); return value; }
 function pass(name, details = {}) { result.checks.push({ name, status: 'pass', ...details }); console.log('PASS', name); }
 function filesBelow(dir) { return fs.readdirSync(dir, {withFileTypes:true}).flatMap(e => e.isDirectory() ? filesBelow(path.join(dir,e.name)) : [path.join(dir,e.name)]); }
 function sha(file) { return crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex'); }
@@ -113,14 +114,14 @@ async function main() {
   fs.mkdirSync(TEMP, { recursive: true }); fs.mkdirSync(OUT, { recursive: true });
   fs.mkdirSync(path.join(TEMP, 'trap'));
   fs.copyFileSync(path.join(ROOT, '.smoke/LoopForge Runtime With Spaces/probe trap/docker.exe'), path.join(TEMP, 'trap/docker.exe'));
-  stage = 'download pinned previous installer';
+  stage=note('download pinned previous installer');
   if(!skipLegacy) {
     const response = await fetch('https://github.com/gatesenman/loopforge-desktop/releases/download/v0.4.0/LoopForge-Setup-0.4.0.exe');
     assert.equal(response.status, 200); fs.writeFileSync(oldInstaller, Buffer.from(await response.arrayBuffer()));
     assert.equal(sha(oldInstaller), 'cf6cc71b2141aa59d0aaaef5b888d9c717ebfae021aefa6bda6ead0f85aa54fd');
   }
   result.installer = { file: path.basename(currentInstaller), sha256: sha(currentInstaller), bytes: fs.statSync(currentInstaller).size };
-  stage = 'silent install previous release';
+  stage=note('silent install previous release');
   if(skipLegacy) {
     baselineVersion=version;
     result.limitations.push('Fresh candidate and same-version repair mode: no legacy-version migration is claimed by this run.');
@@ -140,22 +141,22 @@ async function main() {
     fs.writeFileSync(path.join(OUT,'legacy-installer-crash.json'),events.stdout || '[]');
     baselineVersion=version;
     result.limitations.push('Published 0.4.0 NSIS failed on this Windows runner; current fresh install and same-version repair are tested instead. No 0.4.0 installer upgrade pass is claimed.');
-    stage='fresh candidate installation after legacy failure'; await install(currentInstaller);
+    stage=note('fresh candidate installation after legacy failure'); await install(currentInstaller);
     pass('candidate NSIS fresh per-user installation in path with spaces');
   }
   monitor = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', path.join(__dirname, 'console-monitor.ps1'), '-StopFile', path.join(TEMP, 'stop-monitor'), '-OutputFile', path.join(OUT, 'console-windows.json')], { windowsHide: true, stdio: 'ignore' });
   await expect.poll(() => fs.existsSync(path.join(OUT, 'console-windows.json.ready')), {timeout:30000}).toBe(true);
-  stage = 'first installed GUI launch'; await launch(baselineVersion);
+  stage=note('first installed GUI launch'); await launch(baselineVersion);
   await expect(page.locator('#setupNotice')).toBeVisible(); await shot('01-first-account-empty');
-  stage = 'first administrator through UI';
+  stage=note('first administrator through UI');
   await page.locator('[name="login"]').fill('acceptance-local-admin');
   await page.locator('[name="password"]').fill(password); await page.locator('[name="confirm"]').fill(password);
   await page.locator('#loginSubmit').click(); await ready(); authenticated = true;
   pass('first administrator created through real login UI'); await shot('02-workbench');
-  stage = 'optional native CLI onboarding skip';
+  stage=note('optional native CLI onboarding skip');
   await ps(path.join(__dirname, 'native-dialog.ps1'), ['-AppPid', String(app.process().pid), '-Evidence', path.join(OUT, '03-native-optional-cli.png')]);
   pass('optional CLI onboarding skipped with real Windows UI Automation');
-  stage = 'project UI creation';
+  stage=note('project UI creation');
   await page.goto(origin + '/#/projects'); await page.locator('#newProject').click();
   const wizard = page.locator('#projectWizard');
   await wizard.locator('[name="name"]').fill('Native Windows Acceptance');
@@ -171,7 +172,7 @@ async function main() {
   await shot('04-project-created'); await wizard.locator('[data-pw-action="close"]').last().click();
   assert.equal((await api('/api/projects/' + projectId)).name, 'Native Windows Acceptance');
   pass('minimal real project created via UI without remote repository');
-  stage = 'real welcome workflow';
+  stage=note('real welcome workflow');
   await page.goto(origin + '/#/sops'); await page.locator('#projectSwitcher').selectOption('welcome', { force: true });
   // Open the existing welcome SOP in the designer, then the visible Run control.
   await page.goto(origin + '/#/flow/welcome-workflow');
@@ -199,18 +200,18 @@ async function main() {
   workspaceFiles = filesBelow(workspace).map(file => ({ relative: path.relative(workspace,file), sha256: sha(file) }));
   assert.ok(workspaceFiles.length > 0);
   pass('real Bash welcome workflow, artifact, human approval, completion and workspace', {workspaceFileCount:workspaceFiles.length});
-  stage = 'graceful quit before upgrade'; await quit(); authenticated = false;
+  stage=note('graceful quit before upgrade'); await quit(); authenticated = false;
   // Keep synthetic backup runner-local only; never upload DB, cookies or config.
   fs.cpSync(DATA, path.join(TEMP, 'synthetic-backup'), { recursive: true }); pass('synthetic data backup before installer upgrade');
-  stage = 'install current over prior release'; await install(currentInstaller);
+  stage=note('install current over prior release'); await install(currentInstaller);
   pass(baselineVersion==='0.4.0' ? 'NSIS in-place upgrade from 0.4.0' : 'NSIS same-version repair install');
-  stage = 'upgraded GUI persistence'; await launch(version); await loginIfNeeded();
+  stage=note('upgraded GUI persistence'); await launch(version); await loginIfNeeded();
   assert.equal((await api('/api/projects/' + projectId)).name, 'Native Windows Acceptance');
   assert.equal((await api('/api/runs/' + runId)).status, 'succeeded');
   await page.goto(origin + '/#/runs/' + runId); await shot('07-upgraded-persistence');
   for (const file of workspaceFiles) assert.equal(sha(path.join(DATA,'workspaces',file.relative)), file.sha256);
   pass(baselineVersion==='0.4.0' ? 'account, project, completed run and workspace survive installer upgrade' : 'account, project, completed run and workspace survive repair install');
-  stage = 'no-provider chat guard';
+  stage=note('no-provider chat guard');
   await page.goto(origin + '/#/collaboration');
   const chat = page.frameLocator('iframe[src*="/chatbot/"]');
   const composer = chat.locator('.composer-column textarea');
@@ -225,7 +226,7 @@ async function main() {
   assert.equal(generations,0); page.off('request',countGenerations);
   await shot('07b-no-provider-guard'); await composer.fill('');
   pass('missing-provider UI guard retains draft and does not submit generation');
-  stage = 'required runtime UI checks';
+  stage=note('required runtime UI checks');
   await page.keyboard.press('Control+Shift+E'); await page.waitForURL(/envcheck\.html/);
   await expect.poll(() => page.locator('body').innerText(), { timeout: 90000 }).toContain('Git');
   await shot('08-environment-check');
@@ -246,11 +247,11 @@ async function main() {
   assert.equal(checks.summary.requiredOk, true);
   result.requiredTools = checks.results.map(({id,status,level}) => ({id,status,level}));
   pass('installed bundled Git Bash arrays Node npm Python offline pip and service checks');
-  stage = 'return to workbench';
+  stage=note('return to workbench');
   await app.evaluate(({ Menu }) => { const file=Menu.getApplicationMenu().items.find(i=>i.label==='文件'); file.submenu.items.find(i=>i.label==='重启服务').click(); });
   await page.waitForURL(/^http:\/\/127\.0\.0\.1:\d+\//, { timeout: 150000 }); origin = new URL(page.url()).origin; await loginIfNeeded();
   pass('environment-check navigation and menu service restart');
-  stage = 'sidecar fault recovery';
+  stage=note('sidecar fault recovery');
   const config = JSON.parse(fs.readFileSync(path.join(DATA, 'desktop-config.json')));
   assert.equal(config.secretStorage, 'dpapi'); assert.ok(config.sessionSecretEnc); assert.ok(!config.sessionSecret);
   pass('session secret stored encrypted with DPAPI');
@@ -263,7 +264,7 @@ async function main() {
   await page.waitForURL(/^http:\/\/127\.0\.0\.1:\d+\//, {timeout:150000}); origin=new URL(page.url()).origin; await loginIfNeeded();
   assert.equal((await api('/api/projects/' + projectId)).name, 'Native Windows Acceptance');
   await shot('09-recovered'); pass('real sidecar process fault automatically recovered with project intact');
-  stage = 'current graceful quit and relaunch'; await quit(); authenticated = false;
+  stage=note('current graceful quit and relaunch'); await quit(); authenticated = false;
   await launch(version); await loginIfNeeded(); assert.equal((await api('/api/runs/'+runId)).status, 'succeeded');
   await shot('10-relaunched'); pass('current version quit/relaunch persistence'); await quit(); authenticated = false;
   assert.ok(!fs.existsSync(path.join(TEMP,'unexpected-docker-call'))); pass('no Docker invocation throughout GUI acceptance');

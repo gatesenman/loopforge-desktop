@@ -6,10 +6,11 @@ Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 $until = (Get-Date).AddSeconds(60)
 while ((Get-Date) -lt $until) {
-  $condition = New-Object System.Windows.Automation.AndCondition(
-    (New-Object System.Windows.Automation.PropertyCondition([System.Windows.Automation.AutomationElement]::ProcessIdProperty, $AppPid)),
-    (New-Object System.Windows.Automation.PropertyCondition([System.Windows.Automation.AutomationElement]::ControlTypeProperty, [System.Windows.Automation.ControlType]::Button)))
-  $buttons = [System.Windows.Automation.AutomationElement]::RootElement.FindAll([System.Windows.Automation.TreeScope]::Descendants, $condition)
+  $processCondition = New-Object System.Windows.Automation.PropertyCondition([System.Windows.Automation.AutomationElement]::ProcessIdProperty, $AppPid)
+  $buttonCondition = New-Object System.Windows.Automation.PropertyCondition([System.Windows.Automation.AutomationElement]::ControlTypeProperty, [System.Windows.Automation.ControlType]::Button)
+  # Prune unrelated windows before descending: never scan the runner host terminal.
+  $windows = [System.Windows.Automation.AutomationElement]::RootElement.FindAll([System.Windows.Automation.TreeScope]::Children, $processCondition)
+  $buttons = @($windows | ForEach-Object { $_.FindAll([System.Windows.Automation.TreeScope]::Descendants, $buttonCondition) })
   foreach ($button in $buttons) {
     if ($button.Current.Name -eq '稍后再说') {
       # Capture only the real dialog, never the runner desktop/host console.
