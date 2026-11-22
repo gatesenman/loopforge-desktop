@@ -105,6 +105,6 @@
     "url": "https://github.com/gatesenman/loopforge-desktop.git"
   },
   "dependencies": {
-    "electron-updater": "6.3.9"
+    "electron-updater": "6.8.11"
   }
 }
