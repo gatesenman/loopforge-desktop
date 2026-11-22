@@ -38,6 +38,9 @@ jobs:
       - name: Install npm dependencies
         run: npm ci
 
+      - name: Wrapper dependency security gate (no high/critical)
+        run: npm audit --audit-level=high
+
       - name: Unit security tests
         run: npm test
 
@@ -45,6 +48,7 @@ jobs:
         run: npm run smoke:windows
 
       - name: Build unsigned NSIS installer
+        id: package
         env:
           # Unsigned by default. Set repository secrets CSC_LINK and
           # CSC_KEY_PASSWORD to enable Authenticode signing later.
@@ -66,7 +70,8 @@ jobs:
           if-no-files-found: warn
           path: .e2e-evidence/
 
-      - name: Upload installer artifacts
+      - name: Upload installer artifacts (acceptance result must be checked separately)
+        if: always() && steps.package.outcome == 'success'
         uses: actions/upload-artifact@v4
         with:
           name: LoopForge-Setup

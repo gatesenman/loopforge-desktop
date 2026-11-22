@@ -26,6 +26,7 @@ const result = { version, nativeWindows: true, installedBinary: true, mockedProv
   'Console windows sampled every 20ms; sub-sampling-duration flashes cannot be excluded.',
 ] };
 let app, page, origin, monitor, stage = 'initialization', runId, projectId;
+let baselineVersion = '0.4.0';
 let authenticated = false;
 let workspaceFiles = [];
 const password = 'Acceptance-' + crypto.randomBytes(20).toString('hex') + '!';
@@ -104,10 +105,22 @@ async function main() {
   assert.equal(response.status, 200); fs.writeFileSync(oldInstaller, Buffer.from(await response.arrayBuffer()));
   assert.equal(sha(oldInstaller), 'cf6cc71b2141aa59d0aaaef5b888d9c717ebfae021aefa6bda6ead0f85aa54fd');
   result.installer = { file: path.basename(currentInstaller), sha256: sha(currentInstaller), bytes: fs.statSync(currentInstaller).size };
-  stage = 'silent install previous release'; await install(oldInstaller); pass('NSIS 0.4.0 per-user silent install in path with spaces');
+  stage = 'silent install previous release';
+  try {
+    await install(oldInstaller); pass('NSIS 0.4.0 per-user silent install in path with spaces');
+  } catch (error) {
+    // A legacy installer failure must not prevent testing the actual new product.
+    result.checks.push({name:'NSIS 0.4.0 baseline installation',status:'fail',error:String(error.message).slice(0,1500)});
+    const events = await exec('powershell.exe',['-NoProfile','-NonInteractive','-Command',"@(Get-WinEvent -FilterHashtable @{LogName='Application';Id=1000;StartTime=(Get-Date).AddMinutes(-5)} -ErrorAction SilentlyContinue | Where-Object {$_.Message -like '*LoopForge-Setup-0.4.0.exe*'} | ForEach-Object {$_.Message}) | ConvertTo-Json"],{windowsHide:true}).catch(()=>({stdout:''}));
+    fs.writeFileSync(path.join(OUT,'legacy-installer-crash.json'),events.stdout || '[]');
+    baselineVersion=version;
+    result.limitations.push('Published 0.4.0 NSIS failed on this Windows runner; current fresh install and same-version repair are tested instead. No 0.4.0 installer upgrade pass is claimed.');
+    stage='fresh candidate installation after legacy failure'; await install(currentInstaller);
+    pass('candidate NSIS fresh per-user installation in path with spaces');
+  }
   monitor = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', path.join(__dirname, 'console-monitor.ps1'), '-StopFile', path.join(TEMP, 'stop-monitor'), '-OutputFile', path.join(OUT, 'console-windows.json')], { windowsHide: true, stdio: 'ignore' });
   await expect.poll(() => fs.existsSync(path.join(OUT, 'console-windows.json.ready')), {timeout:30000}).toBe(true);
-  stage = 'first installed GUI launch'; await launch('0.4.0');
+  stage = 'first installed GUI launch'; await launch(baselineVersion);
   await expect(page.locator('#setupNotice')).toBeVisible(); await shot('01-first-account-empty');
   stage = 'first administrator through UI';
   await page.locator('[name="login"]').fill('acceptance-local-admin');
@@ -165,13 +178,13 @@ async function main() {
   // Keep synthetic backup runner-local only; never upload DB, cookies or config.
   fs.cpSync(DATA, path.join(TEMP, 'synthetic-backup'), { recursive: true }); pass('synthetic data backup before installer upgrade');
   stage = 'install current over prior release'; await install(currentInstaller);
-  pass('NSIS in-place upgrade from 0.4.0');
+  pass(baselineVersion==='0.4.0' ? 'NSIS in-place upgrade from 0.4.0' : 'NSIS same-version repair install');
   stage = 'upgraded GUI persistence'; await launch(version); await loginIfNeeded();
   assert.equal((await api('/api/projects/' + projectId)).name, 'Native Windows Acceptance');
   assert.equal((await api('/api/runs/' + runId)).status, 'succeeded');
   await page.goto(origin + '/#/runs/' + runId); await shot('07-upgraded-persistence');
   for (const file of workspaceFiles) assert.equal(sha(path.join(DATA,'workspaces',file.relative)), file.sha256);
-  pass('account, project, completed run and workspace survive installer upgrade');
+  pass(baselineVersion==='0.4.0' ? 'account, project, completed run and workspace survive installer upgrade' : 'account, project, completed run and workspace survive repair install');
   stage = 'no-provider chat guard';
   await page.goto(origin + '/#/collaboration');
   const chat = page.frameLocator('iframe[src*="/chatbot/"]');
@@ -238,7 +251,8 @@ async function main() {
     assert.equal(pe.readUInt16LE(offset+24+68),2,'PE must use Windows GUI subsystem');
   }
   pass('desktop and Start Menu shortcut targets, extracted executable icon, GUI PE subsystem');
-  result.status='pass';
+  result.status=result.checks.some(c=>c.status==='fail')?'partial':'pass';
+  if(result.status==='partial') process.exitCode=1;
 }
 main().catch(async (error) => {
   result.status='fail'; result.failedStage=stage;
