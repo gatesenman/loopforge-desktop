@@ -26,7 +26,7 @@ const result = { buildRun:process.env.LOOPFORGE_ACCEPTANCE_BUILD_RUN || process.
   '0.3.10 and live auto-update download/restart not tested. Only completed assertions establish upgrade coverage.',
   'Console windows sampled every 20ms; sub-sampling-duration flashes cannot be excluded.',
 ] };
-let app, page, origin, monitor, mainPid, stage=note('initialization'), runId, projectId;
+let app, page, origin, monitor, mainPid, mainHandle, stage=note('initialization'), runId, projectId;
 let baselineVersion = '0.4.0';
 let authenticated = false;
 let workspaceFiles = [];
@@ -61,6 +61,7 @@ async function launch(expectedVersion) {
   page.setDefaultTimeout(45000);
   const metadata = await app.evaluate(({ app }) => ({ packaged: app.isPackaged, version: app.getVersion(), data: app.getPath('userData'), mainPid:process.pid }));
   mainPid=metadata.mainPid;
+  mainHandle=await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].getNativeWindowHandle().readBigUInt64LE().toString());
   assert.equal(metadata.packaged, true); assert.equal(metadata.version, expectedVersion);
   // Chromium may resolve appData through the Windows known-folder API or APPDATA.
   assert.ok(path.resolve(metadata.data).toLowerCase()===DATA.toLowerCase() || path.resolve(metadata.data).toLowerCase().startsWith(TEMP.toLowerCase()+path.sep));
@@ -168,7 +169,7 @@ async function main() {
   stage=note('optional native CLI onboarding skip');
   let skippedCliDialog=false;
   try {
-    await ps(path.join(__dirname, 'native-dialog.ps1'), ['-AppPid', String(mainPid), '-Evidence', path.join(OUT, '03-native-optional-cli.png')]);
+    await ps(path.join(__dirname, 'native-dialog.ps1'), ['-AppPid', String(mainPid), '-MainWindowHandle',mainHandle,'-Evidence', path.join(OUT, '03-native-optional-cli.png')]);
     skippedCliDialog=true;
   } catch(error) {
     const cfg=JSON.parse(fs.readFileSync(path.join(DATA,'desktop-config.json'),'utf8'));
