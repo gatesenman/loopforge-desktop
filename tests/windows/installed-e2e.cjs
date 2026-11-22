@@ -59,7 +59,8 @@ async function launch(expectedVersion) {
   app = await electron.launch({ executablePath, env: safeEnv(), timeout: 90000 });
   page = await app.firstWindow();
   page.setDefaultTimeout(45000);
-  const metadata = await app.evaluate(({ app }) => ({ packaged: app.isPackaged, version: app.getVersion(), data: app.getPath('userData'), mainPid:process.pid }));
+  const metadata = await app.evaluate(({ app }) => ({ packaged: app.isPackaged, version: app.getVersion(), data: app.getPath('userData'), mainPid:process.pid, versions:{electron:process.versions.electron,chrome:process.versions.chrome,embeddedNode:process.versions.node,platform:process.platform,arch:process.arch} }));
+  result.electronRuntime=metadata.versions;
   mainPid=metadata.mainPid;
   mainHandle=await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].getNativeWindowHandle().readBigUInt64LE().toString());
   assert.equal(metadata.packaged, true); assert.equal(metadata.version, expectedVersion);
@@ -257,7 +258,8 @@ async function main() {
   await shot('07b-no-provider-guard'); await composer.fill('');
   pass('missing-provider UI guard retains draft and does not submit generation');
   stage=note('required runtime UI checks');
-  await page.keyboard.press('Control+Shift+E'); await page.waitForURL(/envcheck\.html/);
+  await app.evaluate(({Menu})=>Menu.getApplicationMenu().items.find(i=>i.label==='文件').submenu.items.find(i=>i.label==='环境检查…').click());
+  await page.waitForURL(/envcheck\.html/);
   await expect.poll(() => page.locator('body').innerText(), { timeout: 90000 }).toContain('Git');
   await shot('08-environment-check');
   // Validate actual production check module against installed bundled paths.
@@ -271,12 +273,15 @@ async function main() {
     const execFileSync=require('child_process').execFileSync;
     const pip=execFileSync(path.join(runtime,'python/python.exe'),['-m','pip','--version'],{env,windowsHide:true,encoding:'utf8',timeout:30000});
     if(!/pip 24\.3\.1/.test(pip)) throw Error('Installed offline pip unavailable');
-    const bash=execFileSync(path.join(runtime,'git/usr/bin/bash.exe'),['-c','a=(one two); [[ ${a[1]} == two ]] && printf bash-arrays-ok'],{env,windowsHide:true,encoding:'utf8',timeout:30000});
+    const bash=execFileSync(path.join(runtime,'git/usr/bin/bash.exe'),['-c','a=(one two); [[ ${a[1]} == two ]] && printf "bash-arrays-ok %s" "$BASH_VERSION"'],{env,windowsHide:true,encoding:'utf8',timeout:30000});
     if(!bash.includes('bash-arrays-ok')) throw Error('Installed Bash arrays unavailable');
-    return runChecks({env, dataDir:app.getPath('userData'), gitDir:path.join(runtime,'git'), nodeDir:path.join(runtime,'node'), pythonDir:path.join(runtime,'python'), serverUrl, requiredOnly:true });
+    const report=await runChecks({env, dataDir:app.getPath('userData'), gitDir:path.join(runtime,'git'), nodeDir:path.join(runtime,'node'), pythonDir:path.join(runtime,'python'), serverUrl, requiredOnly:true });
+    report.additionalVersions={pip:pip.match(/^pip\s+\S+/)?.[0],bash:bash.trim().replace('bash-arrays-ok ','')};
+    return report;
   }, origin);
   assert.equal(checks.summary.requiredOk, true);
-  result.requiredTools = checks.results.map(({id,status,level}) => ({id,status,level}));
+  result.requiredTools = checks.results.map(({id,status,level,version}) => ({id,status,level,version}));
+  result.additionalRuntimeVersions=checks.additionalVersions;
   pass('installed bundled Git Bash arrays Node npm Python offline pip and service checks');
   stage=note('return to workbench');
   await app.evaluate(({ Menu }) => { const file=Menu.getApplicationMenu().items.find(i=>i.label==='文件'); file.submenu.items.find(i=>i.label==='重启服务').click(); });
