@@ -32,10 +32,10 @@ const password = 'Acceptance-' + crypto.randomBytes(20).toString('hex') + '!';
 function pass(name, details = {}) { result.checks.push({ name, status: 'pass', ...details }); console.log('PASS', name); }
 function filesBelow(dir) { return fs.readdirSync(dir, {withFileTypes:true}).flatMap(e => e.isDirectory() ? filesBelow(path.join(dir,e.name)) : [path.join(dir,e.name)]); }
 function sha(file) { return crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex'); }
-function ps(file, args = []) { return exec('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', file, ...args], { windowsHide: true, timeout: 90000 }); }
+function ps(file, args = []) { return exec('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', file, ...args], { windowsHide: true, timeout: 240000 }); }
 async function shot(name) { await page.screenshot({ path: path.join(OUT, name + '.png') }); }
 async function install(file) {
-  await exec(file, ['/S', `/D=${INSTALL}`], { windowsHide: true, windowsVerbatimArguments: true, timeout: 180000 });
+  await ps(path.join(__dirname,'install.ps1'), ['-Installer',file,'-Destination',INSTALL]);
   assert.ok(fs.existsSync(executablePath), 'Installed executable missing');
   assert.ok(fs.existsSync(path.join(INSTALL, 'resources/app.asar')), 'Installed app.asar missing');
 }

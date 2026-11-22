@@ -62,6 +62,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: Windows-installed-GUI-evidence
+          include-hidden-files: true
           if-no-files-found: warn
           path: .e2e-evidence/
 
