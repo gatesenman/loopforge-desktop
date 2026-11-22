@@ -296,10 +296,10 @@ index b87faf1..cd5a8a4 100644
  		return false, false, fmt.Errorf("index lock %s is not a regular file", want)
  	}
 diff --git a/internal/runtime/process.go b/internal/runtime/process.go
-index a5c5365..241a1a4 100644
+index a5c5365..997dd8d 100644
 --- a/internal/runtime/process.go
 +++ b/internal/runtime/process.go
-@@ -2,6 +2,7 @@ package runtime
+@@ -2,6 +2,7 @@
  
  import (
  	"agentflow/internal/domain"
@@ -307,7 +307,16 @@ index a5c5365..241a1a4 100644
  	"bytes"
  	"errors"
  	"fmt"
-@@ -45,8 +46,8 @@ func runCommand(cmd *exec.Cmd, sink EventSink) (string, error) {
+@@ -17,6 +18,8 @@
+ var errProcessNotStarted = errors.New("process was not started")
+ 
+ func runCommand(cmd *exec.Cmd, sink EventSink) (string, error) {
++	// Ordinary SOP scripts do not request OwnProcessGroup; hide them regardless.
++	hideCommandWindow(cmd)
+ 	var buf bytes.Buffer
+ 	var mu sync.Mutex
+ 	stdout := &processWriter{output: &buf, mu: &mu, sink: sink, name: "process.stdout", level: "info"}
+@@ -45,8 +48,8 @@
  	if err != nil && cmd.Process == nil {
  		err = fmt.Errorf("%w: %w", errProcessNotStarted, err)
  	}
@@ -1225,3 +1234,67 @@ diff --git a/cmd/agentflow/main.go b/cmd/agentflow/main.go
  	wait:
  		for received := range sig {
  			if received != syscall.SIGHUP {
+diff --git a/internal/runtime/desktop_process_windows_test.go b/internal/runtime/desktop_process_windows_test.go
+new file mode 100644
+index 0000000..dbd9b69
+--- /dev/null
++++ b/internal/runtime/desktop_process_windows_test.go
+@@ -0,0 +1,32 @@
++//go:build windows
++
++package runtime
++
++import (
++	"os/exec"
++	"strings"
++	"syscall"
++	"testing"
++
++	"golang.org/x/sys/windows"
++)
++
++func TestDesktopRunCommandHidesUngroupedWindowsChild(t *testing.T) {
++	// Real command launch through the same boundary used by ordinary SOP sh.exe
++	// nodes. There is deliberately no OwnProcessGroup/SetProcessGroup setup.
++	cmd := exec.Command("cmd.exe", "/d", "/c", "echo", "desktop-console-regression")
++	out, err := runCommand(cmd, nil)
++	if err != nil || !strings.Contains(out, "desktop-console-regression") {
++		t.Fatalf("real hidden child did not execute: %v %q", err, out)
++	}
++	if cmd.SysProcAttr == nil || !cmd.SysProcAttr.HideWindow || cmd.SysProcAttr.CreationFlags&windows.CREATE_NO_WINDOW == 0 {
++		t.Fatal("runCommand did not hide an ungrouped Windows script")
++	}
++	prior := &syscall.SysProcAttr{CreationFlags: windows.CREATE_NEW_PROCESS_GROUP}
++	preserved := exec.Command("cmd.exe")
++	preserved.SysProcAttr = prior
++	hideCommandWindow(preserved)
++	if preserved.SysProcAttr != prior || prior.CreationFlags&windows.CREATE_NEW_PROCESS_GROUP == 0 || prior.CreationFlags&windows.CREATE_NO_WINDOW == 0 {
++		t.Fatal("hiding must preserve caller process-group attributes")
++	}
++}
+diff --git a/internal/runtime/browser_agent_test.go b/internal/runtime/browser_agent_test.go
+index 9b45288..5e918b0 100644
+--- a/internal/runtime/browser_agent_test.go
++++ b/internal/runtime/browser_agent_test.go
+@@ -10,11 +10,11 @@
+ 	"os/exec"
+ 	"path/filepath"
+ 	"strings"
+-	"syscall"
+ 	"testing"
+ 	"time"
+ 
+ 	"agentflow/internal/domain"
++	"agentflow/internal/osx"
+ )
+ 
+ func TestReapOrphanHostBrowsersKillsBrowsersOfDeadOwners(t *testing.T) {
+@@ -24,7 +24,7 @@
+ 		t.Fatal(err)
+ 	}
+ 	orphan := exec.Command("sleep", "60")
+-	orphan.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
++	osx.SetProcessGroup(orphan)
+ 	if err := orphan.Start(); err != nil {
+ 		t.Fatal(err)
+ 	}

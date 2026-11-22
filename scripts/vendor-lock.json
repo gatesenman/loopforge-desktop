@@ -36,7 +36,7 @@
     "patch": "patches/0001-desktop-no-docker-hide-console.patch",
     "note": "Always build all four Windows binaries from pristine pinned git archive plus verified desktop patch; never reuse dirty working-tree output or historical binary hashes. Build native-chat first with upstream npm lockfile. Emit resources/bin/build-manifest.json with source/patch/toolchain and per-binary SHA256; windows CI uploads it. Cross-platform byte-identical executable output is not promised.",
     "goVersion": "go1.27.3",
-    "patchSha256": "c3ad93e0dcb0507002b0f3d603c26ea3bb5485c9a70beed467fe8e1ebc21aae8"
+    "patchSha256": "cfd405f31d28f80b02028d225cd676b93e57320d765053fe8a6c7fb10bef27c1"
   },
   "pip": {
     "version": "24.3.1",

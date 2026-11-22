@@ -113,3 +113,20 @@ upgrade test: the legacy NSIS installation/registry phase was not successful.
 The run remains partial/non-green when the immutable old installer failed, even
 if real data migration and all candidate assertions succeed. Fresh/repair remains
 a separate clean-build blocking gate.
+
+## Real ordinary-SOP console defect (native Server 2022 diagnosis)
+
+Run 45039359988 attributed both observed console windows to actual `sh.exe`
+children of `agentflow.exe` during the two welcome workflow script nodes, not
+PowerShell/test helpers. `OwnProcessGroup` is false for these ordinary scripts,
+so the existing hidden flags on SetProcessGroup did not apply. The production
+`runCommand` launch boundary now calls `hideCommandWindow` unconditionally,
+retaining existing process-group attributes. No shell/cmd wrapper is added.
+
+`scripts/windows-console-regression.js` runs a native Go regression on the actual
+prepared production function, requires a pass with the fix, removes only the
+new call temporarily to reproduce the specific missing-flags failure, and
+restores the source byte-for-byte in a finally block. The installed GUI gate
+still rejects every new visible console at 20ms sampling; it is not relaxed.
+The full workflow also explicitly uploads its safe hidden `.smoke/*.json`
+allowlist (not databases, profile or raw service logs).
