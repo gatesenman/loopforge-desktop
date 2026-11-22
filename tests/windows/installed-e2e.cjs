@@ -81,8 +81,8 @@ async function launch(expectedVersion) {
   }
   origin = new URL(page.url()).origin;
   assert.ok(!page.url().includes('envcheck'), 'Required checks must not open blocking wizard');
-  result.installedBinary=true;
-  pass('installed GUI launch ' + expectedVersion, { packaged: metadata.packaged });
+  if(expectedVersion===version) result.installedBinary=true;
+  pass((expectedVersion==='0.4.0' && result.legacyBaselineMode==='published-installer-payload' ? 'published legacy payload GUI launch ' : 'installed GUI launch ') + expectedVersion, { packaged: metadata.packaged });
 }
 async function api(url) {
   return page.evaluate(async (url) => { const r = await fetch(url); if (!r.ok) throw Error('GET failed: ' + r.status); return r.json(); }, url);
@@ -151,10 +151,20 @@ async function main() {
     result.checks.push({name:'NSIS 0.4.0 baseline installation',status:'fail',error:String(error.message).slice(0,1500)});
     const events = await exec('powershell.exe',['-NoProfile','-NonInteractive','-Command',"@(Get-WinEvent -FilterHashtable @{LogName='Application';Id=1000;StartTime=(Get-Date).AddMinutes(-5)} -ErrorAction SilentlyContinue | Where-Object {$_.Message -like '*LoopForge-Setup-0.4.0.exe*'} | ForEach-Object {$_.Message}) | ConvertTo-Json"],{windowsHide:true}).catch(()=>({stdout:''}));
     fs.writeFileSync(path.join(OUT,'legacy-installer-crash.json'),events.stdout || '[]');
-    baselineVersion=version;
-    result.limitations.push('Published 0.4.0 NSIS failed on this Windows runner; current fresh install and same-version repair are tested instead. No 0.4.0 installer upgrade pass is claimed.');
-    stage=note('fresh candidate installation after legacy failure'); await install(currentInstaller);
-    pass('candidate NSIS fresh per-user installation in path with spaces');
+    // A different, explicitly labeled data-only test: real bytes from the pinned
+    // published installer, not a recreated/mocked old profile. Keep installer FAIL.
+    result.legacyBaselineMode='published-installer-payload';
+    result.limitations.push('Published 0.4.0 NSIS failed. Its checksum-pinned real application payload is extracted only to seed synthetic data through the actual old GUI. This is data-format migration coverage, NOT a legacy installer/registered-install upgrade pass.');
+    stage=note('extract real published 0.4.0 payload for data-only migration');
+    const sevenZip=path.join(process.env.ProgramFiles,'7-Zip/7z.exe');
+    assert.ok(fs.existsSync(sevenZip),'7-Zip required for explicitly labeled published legacy payload fixture');
+    const unpack=path.join(TEMP,'legacy-installer-payload');
+    await exec(sevenZip,['x',oldInstaller,'-o'+unpack,'-y'],{windowsHide:true,timeout:120000});
+    const payloads=filesBelow(unpack).filter(f=>/app-64\.7z$/i.test(f));
+    assert.equal(payloads.length,1,'Expected exactly one x64 application payload in published NSIS');
+    await exec(sevenZip,['x',payloads[0],'-o'+INSTALL,'-y'],{windowsHide:true,timeout:120000});
+    assert.ok(fs.existsSync(executablePath)); assert.ok(fs.existsSync(path.join(INSTALL,'resources/app.asar')));
+    pass('real published 0.4.0 payload extracted for data-only migration (not legacy installation)');
   }
   monitor = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', path.join(__dirname, 'console-monitor.ps1'), '-StopFile', path.join(TEMP, 'stop-monitor'), '-OutputFile', path.join(OUT, 'console-windows.json')], { windowsHide: true, stdio: 'ignore' });
   await expect.poll(() => fs.existsSync(path.join(OUT, 'console-windows.json.ready')), {timeout:30000}).toBe(true);
@@ -235,13 +245,14 @@ async function main() {
   // Keep synthetic backup runner-local only; never upload DB, cookies or config.
   fs.cpSync(DATA, path.join(TEMP, 'synthetic-backup'), { recursive: true }); pass('synthetic data backup before installer upgrade');
   stage=note('install current over prior release'); await install(currentInstaller);
-  pass(baselineVersion==='0.4.0' ? 'NSIS in-place upgrade from 0.4.0' : 'NSIS same-version repair install');
+  pass(baselineVersion==='0.4.0' ? (result.legacyBaselineMode==='published-installer-payload' ? 'candidate NSIS installation over legacy payload directory (not registered legacy upgrade)' : 'NSIS in-place upgrade from 0.4.0') : 'NSIS same-version repair install');
   stage=note('upgraded GUI persistence'); await launch(version); await loginIfNeeded();
   assert.equal((await api('/api/projects/' + projectId)).name, 'Native Windows Acceptance');
   assert.equal((await api('/api/runs/' + runId)).status, 'succeeded');
   await page.goto(origin + '/#/runs/' + runId); await shot('07-upgraded-persistence');
   for (const file of workspaceFiles) assert.equal(sha(path.join(DATA,'workspaces',file.relative)), file.sha256);
-  pass(baselineVersion==='0.4.0' ? 'account, project, completed run and workspace survive installer upgrade' : 'account, project, completed run and workspace survive repair install');
+  pass(baselineVersion==='0.4.0' ? 'account, project, completed run and workspace survive real 0.4.0 data migration' : 'account, project, completed run and workspace survive repair install');
+  if(baselineVersion==='0.4.0') result.dataMigration={from:baselineVersion,to:version,baseline:result.legacyBaselineMode || 'nsis-installation',status:'pass'};
   stage=note('no-provider chat guard');
   await page.goto(origin + '/#/collaboration');
   const chat = page.frameLocator('iframe[src*="/chatbot/"]');

@@ -100,3 +100,16 @@ that guard to run it against a real user's profile.
 native packaging run without rebuilding or modifying its installer. Its result
 records both build-run provenance and test commit. The final clean-build workflow
 must still pass before publication.
+
+## Published legacy payload data migration (separate from installer upgrade)
+
+The optional legacy gate keeps the published 0.4.0 NSIS failure as a FAIL. To
+continue a narrower data-format test, it can extract the actual checksum-pinned
+published installer payload with 7-Zip, launch that real 0.4.0 application and
+create all synthetic accounts/projects/runs through its GUI. The new candidate
+NSIS then installs into that directory and must reopen the old data and workspace.
+This is not a mocked profile, but it is also **not** a registered legacy-install
+upgrade test: the legacy NSIS installation/registry phase was not successful.
+The run remains partial/non-green when the immutable old installer failed, even
+if real data migration and all candidate assertions succeed. Fresh/repair remains
+a separate clean-build blocking gate.
