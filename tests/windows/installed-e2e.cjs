@@ -27,8 +27,10 @@ const result = { version, nativeWindows: true, installedBinary: true, mockedProv
 ] };
 let app, page, origin, monitor, stage = 'initialization', runId, projectId;
 let authenticated = false;
+let workspaceFiles = [];
 const password = 'Acceptance-' + crypto.randomBytes(20).toString('hex') + '!';
 function pass(name, details = {}) { result.checks.push({ name, status: 'pass', ...details }); console.log('PASS', name); }
+function filesBelow(dir) { return fs.readdirSync(dir, {withFileTypes:true}).flatMap(e => e.isDirectory() ? filesBelow(path.join(dir,e.name)) : [path.join(dir,e.name)]); }
 function sha(file) { return crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex'); }
 function ps(file, args = []) { return exec('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', file, ...args], { windowsHide: true, timeout: 90000 }); }
 async function shot(name) { await page.screenshot({ path: path.join(OUT, name + '.png') }); }
@@ -84,6 +86,11 @@ async function loginIfNeeded() {
     await page.locator('#loginSubmit').click();
   }
   await ready(); authenticated = true;
+}
+async function appIconFromInstalledExe() {
+  const file=path.join(OUT,'installed-executable-icon.png');
+  await exec('powershell.exe',['-NoProfile','-NonInteractive','-Command',`Add-Type -AssemblyName System.Drawing; $i=[Drawing.Icon]::ExtractAssociatedIcon('${executablePath.replaceAll("'","''")}'); $b=$i.ToBitmap(); $b.Save('${file.replaceAll("'","''")}'); $b.Dispose(); $i.Dispose()`],{windowsHide:true});
+  return fs.readFileSync(file);
 }
 async function main() {
   assert.equal(process.platform, 'win32', 'Native Windows only; Wine is not acceptance');
@@ -151,7 +158,9 @@ async function main() {
   assert.ok(run.artifacts.some(a => a.name === 'completed')); await shot('06-workflow-succeeded');
   const workspace = path.join(DATA, 'workspaces');
   assert.ok(fs.readdirSync(workspace).length > 0, 'Real workflow workspace persisted');
-  pass('real Bash welcome workflow, artifact, human approval, completion and workspace');
+  workspaceFiles = filesBelow(workspace).map(file => ({ relative: path.relative(workspace,file), sha256: sha(file) }));
+  assert.ok(workspaceFiles.length > 0);
+  pass('real Bash welcome workflow, artifact, human approval, completion and workspace', {workspaceFileCount:workspaceFiles.length});
   stage = 'graceful quit before upgrade'; await quit(); authenticated = false;
   // Keep synthetic backup runner-local only; never upload DB, cookies or config.
   fs.cpSync(DATA, path.join(TEMP, 'synthetic-backup'), { recursive: true }); pass('synthetic data backup before installer upgrade');
@@ -161,7 +170,23 @@ async function main() {
   assert.equal((await api('/api/projects/' + projectId)).name, 'Native Windows Acceptance');
   assert.equal((await api('/api/runs/' + runId)).status, 'succeeded');
   await page.goto(origin + '/#/runs/' + runId); await shot('07-upgraded-persistence');
+  for (const file of workspaceFiles) assert.equal(sha(path.join(DATA,'workspaces',file.relative)), file.sha256);
   pass('account, project, completed run and workspace survive installer upgrade');
+  stage = 'no-provider chat guard';
+  await page.goto(origin + '/#/collaboration');
+  const chat = page.frameLocator('iframe[src*="/chatbot/"]');
+  const composer = chat.locator('.composer-column textarea');
+  await expect(composer).toBeEditable(); await page.waitForLoadState('networkidle');
+  let generations = 0;
+  const countGenerations = r => { if(r.method()==='POST' && new URL(r.url()).pathname==='/api/assistant/generations') generations++; };
+  page.on('request',countGenerations);
+  await composer.fill('Acceptance without provider credentials must not start a model.');
+  await chat.locator('.send-button').click();
+  await expect(chat.locator('.credential-notice')).toBeVisible();
+  await expect(composer).toHaveValue('Acceptance without provider credentials must not start a model.');
+  assert.equal(generations,0); page.off('request',countGenerations);
+  await shot('07b-no-provider-guard'); await composer.fill('');
+  pass('missing-provider UI guard retains draft and does not submit generation');
   stage = 'required runtime UI checks';
   await page.keyboard.press('Control+Shift+E'); await page.waitForURL(/envcheck\.html/);
   await expect.poll(() => page.locator('body').innerText(), { timeout: 90000 }).toContain('Git');
@@ -203,7 +228,16 @@ async function main() {
   const consoles=JSON.parse(fs.readFileSync(path.join(OUT,'console-windows.json'),'utf8').replace(/^\uFEFF/,'')); assert.deepEqual(consoles,[]); pass('no new visible console windows observed at 20ms sampling');
   const shortcutEvidence = await exec('powershell.exe', ['-NoProfile','-NonInteractive','-Command', `$s=New-Object -ComObject WScript.Shell; $paths=@(\"$env:USERPROFILE\\Desktop\\LoopForge.lnk\",\"$env:APPDATA\\Microsoft\\Windows\\Start Menu\\Programs\\LoopForge.lnk\"); @($paths | ForEach-Object { if(Test-Path $_){$l=$s.CreateShortcut($_); [PSCustomObject]@{name=[IO.Path]::GetFileName($_);target=$l.TargetPath;icon=$l.IconLocation}} }) | ConvertTo-Json`], {windowsHide:true});
   fs.writeFileSync(path.join(OUT,'shortcuts.json'),shortcutEvidence.stdout);
-  pass('shortcut metadata captured (visual inspection separate)');
+  const shortcutData=JSON.parse(shortcutEvidence.stdout); const shortcuts=Array.isArray(shortcutData)?shortcutData:[shortcutData];
+  assert.equal(shortcuts.length,2);
+  for(const shortcut of shortcuts) assert.equal(shortcut.target.toLowerCase(),executablePath.toLowerCase());
+  const icon=await appIconFromInstalledExe();
+  fs.writeFileSync(path.join(OUT,'installed-executable-icon.png'),icon);
+  for(const file of [executablePath,path.join(INSTALL,'resources/bin/agentflow.exe')]) {
+    const pe=fs.readFileSync(file),offset=pe.readUInt32LE(0x3c);
+    assert.equal(pe.readUInt16LE(offset+24+68),2,'PE must use Windows GUI subsystem');
+  }
+  pass('desktop and Start Menu shortcut targets, extracted executable icon, GUI PE subsystem');
   result.status='pass';
 }
 main().catch(async (error) => {
