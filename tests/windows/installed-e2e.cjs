@@ -26,7 +26,7 @@ const result = { buildRun:process.env.LOOPFORGE_ACCEPTANCE_BUILD_RUN || process.
   '0.3.10 and live auto-update download/restart not tested. Only completed assertions establish upgrade coverage.',
   'Console windows sampled every 20ms; sub-sampling-duration flashes cannot be excluded.',
 ] };
-let app, page, origin, monitor, stage=note('initialization'), runId, projectId;
+let app, page, origin, monitor, mainPid, stage=note('initialization'), runId, projectId;
 let baselineVersion = '0.4.0';
 let authenticated = false;
 let workspaceFiles = [];
@@ -56,7 +56,8 @@ async function launch(expectedVersion) {
   app = await electron.launch({ executablePath, env: safeEnv(), timeout: 90000 });
   page = await app.firstWindow();
   page.setDefaultTimeout(45000);
-  const metadata = await app.evaluate(({ app }) => ({ packaged: app.isPackaged, version: app.getVersion(), data: app.getPath('userData') }));
+  const metadata = await app.evaluate(({ app }) => ({ packaged: app.isPackaged, version: app.getVersion(), data: app.getPath('userData'), mainPid:process.pid }));
+  mainPid=metadata.mainPid;
   assert.equal(metadata.packaged, true); assert.equal(metadata.version, expectedVersion);
   assert.equal(path.resolve(metadata.data).toLowerCase(), DATA.toLowerCase());
   await page.waitForURL(url => /^http:\/\/127\.0\.0\.1:\d+\//.test(url.href) || url.pathname.endsWith('/envcheck.html'), { timeout: 150000 });
@@ -79,7 +80,11 @@ async function launch(expectedVersion) {
 async function api(url) {
   return page.evaluate(async (url) => { const r = await fetch(url); if (!r.ok) throw Error('GET failed: ' + r.status); return r.json(); }, url);
 }
-async function ready() { await expect(page.locator('#projectSwitcher option').first()).toBeAttached({ timeout: 60000 }); }
+async function ready() {
+  await expect(page.locator('#projectSwitcher option').first()).toBeAttached({timeout:60000});
+  await expect(page.locator('body')).not.toHaveClass(/booting/, {timeout:60000});
+  await expect(page.locator('#bootLoader')).toBeHidden({timeout:60000});
+}
 async function quit() {
   const exited = once(app.process(), 'exit');
   await app.evaluate(({ Menu }) => {
@@ -152,9 +157,11 @@ async function main() {
   await page.locator('[name="login"]').fill('acceptance-local-admin');
   await page.locator('[name="password"]').fill(password); await page.locator('[name="confirm"]').fill(password);
   await page.locator('#loginSubmit').click(); await ready(); authenticated = true;
-  pass('first administrator created through real login UI'); await shot('02-workbench');
+  pass('first administrator created through real login UI');
+  await expect(page.frameLocator('iframe[src*="/chatbot/"]').locator('.composer-column textarea')).toBeEditable();
+  await shot('02-workbench');
   stage=note('optional native CLI onboarding skip');
-  await ps(path.join(__dirname, 'native-dialog.ps1'), ['-AppPid', String(app.process().pid), '-Evidence', path.join(OUT, '03-native-optional-cli.png')]);
+  await ps(path.join(__dirname, 'native-dialog.ps1'), ['-AppPid', String(mainPid), '-Evidence', path.join(OUT, '03-native-optional-cli.png')]);
   pass('optional CLI onboarding skipped with real Windows UI Automation');
   stage=note('project UI creation');
   await page.goto(origin + '/#/projects'); await page.locator('#newProject').click();
