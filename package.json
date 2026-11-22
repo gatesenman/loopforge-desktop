@@ -1,7 +1,7 @@
 {
   "name": "loopforge-desktop",
   "productName": "LoopForge",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "description": "LoopForge 桌面版：安装即用（内置 Git / Node.js / Python 与本地运行时，无需 Docker）",
   "author": "LoopForge Desktop packaging (upstream: Tencent/LoopForge, MIT)",
   "license": "MIT",
@@ -15,6 +15,7 @@
     "smoke:windows": "node scripts/windows-smoke.js"
   },
   "devDependencies": {
+    "@playwright/test": "1.65.1",
     "electron": "33.4.11",
     "electron-builder": "25.1.8"
   },

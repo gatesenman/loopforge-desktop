@@ -8,6 +8,7 @@ const { pathToFileURL } = require('url');
 const { spawn, execFile } = require('child_process');
 const { runChecks, pathKey, requiredReady, npmCliJs, firstExisting, which } = require('./envcheck');
 const secret = require('./secret');
+const { requiredChecksPass } = require('./startup-check');
 const { setupAutoUpdate } = require('./updater');
 const { exportDiagnostics } = require('./diagnostics');
 
@@ -369,9 +370,7 @@ async function bootServerIntoWindow(opts = {}) {
     }
     // Required bundled tools are checked silently. Only open the env-check
     // page when a required item fails. Optional Agent CLIs never block startup.
-    let report = null;
-    try { report = await collectChecks(true); } catch (e) { appendLog('silent env check failed: ' + e.message); }
-    if (report && !requiredReady(report)) {
+    if (!await requiredChecksPass(() => collectChecks(true), requiredReady, appendLog)) {
       openEnvCheck(true);
       return;
     }
