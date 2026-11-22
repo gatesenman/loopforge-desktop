@@ -1,0 +1,49 @@
+name: Retest built Windows GUI artifact
+on:
+  workflow_dispatch:
+    inputs:
+      build_run:
+        description: Successful packaging run containing LoopForge-Setup artifact
+        required: true
+        type: string
+permissions:
+  contents: read
+  actions: read
+jobs:
+  installed-gui:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22.23.5'
+          cache: npm
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.27.3'
+          cache-dependency-path: scripts/vendor-lock.json
+      - run: npm ci --ignore-scripts
+      - name: Download exact previously built native installer
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BUILD_RUN: ${{ inputs.build_run }}
+        run: |
+          if ($env:BUILD_RUN -notmatch '^\d+$') { throw 'Invalid build run' }
+          gh run download $env:BUILD_RUN --repo $env:GITHUB_REPOSITORY --name LoopForge-Setup --dir .
+      - name: Build Docker invocation trap (test fixture only)
+        run: |
+          $dir='.smoke/LoopForge Runtime With Spaces/probe trap'
+          New-Item $dir -ItemType Directory -Force | Out-Null
+          'package main; import "os"; func main(){os.WriteFile(os.Getenv("LOOPFORGE_PROBE_MARKER"),[]byte("unexpected invocation"),0600);os.Exit(97)}' | Set-Content "$env:RUNNER_TEMP/docker-trap.go"
+          go build -o "$dir/docker.exe" "$env:RUNNER_TEMP/docker-trap.go"
+      - name: Real installed GUI acceptance
+        env:
+          LOOPFORGE_ACCEPTANCE_BUILD_RUN: ${{ inputs.build_run }}
+        run: node tests/windows/installed-e2e.cjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: Windows-installed-GUI-evidence
+          include-hidden-files: true
+          path: .e2e-evidence/
