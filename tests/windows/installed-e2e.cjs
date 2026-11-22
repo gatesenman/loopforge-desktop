@@ -14,7 +14,7 @@ const ROOT = path.resolve(__dirname, '../..');
 const OUT = path.join(ROOT, '.e2e-evidence');
 const TEMP = path.join(process.env.RUNNER_TEMP || process.env.TEMP, 'LoopForge Installed Acceptance');
 const INSTALL = path.join(TEMP, 'Installed App With Spaces');
-const DATA = path.join(process.env.APPDATA, 'LoopForge');
+let DATA = path.join(process.env.APPDATA, 'LoopForge');
 const version = require('../../package.json').version;
 const skipLegacy = process.env.LOOPFORGE_ACCEPTANCE_SKIP_LEGACY === '1';
 const currentInstaller = path.join(ROOT, 'dist', `LoopForge-Setup-${version}.exe`);
@@ -48,6 +48,9 @@ function safeEnv() {
     if (process.env[key]) env[key] = process.env[key];
   }
   // No CI-installed coding agents or provider keys may leak into acceptance.
+  env.USERPROFILE=path.join(TEMP,'clean-profile'); env.HOME=env.USERPROFILE;
+  env.APPDATA=path.join(env.USERPROFILE,'AppData/Roaming'); env.LOCALAPPDATA=path.join(env.USERPROFILE,'AppData/Local');
+  for(const dir of [env.USERPROFILE,env.APPDATA,env.LOCALAPPDATA]) fs.mkdirSync(dir,{recursive:true});
   env.PATH = [path.join(TEMP, 'trap'), path.join(env.SystemRoot, 'System32'), env.SystemRoot].join(';');
   env.LOOPFORGE_PROBE_MARKER = path.join(TEMP, 'unexpected-docker-call');
   return env;
@@ -59,7 +62,9 @@ async function launch(expectedVersion) {
   const metadata = await app.evaluate(({ app }) => ({ packaged: app.isPackaged, version: app.getVersion(), data: app.getPath('userData'), mainPid:process.pid }));
   mainPid=metadata.mainPid;
   assert.equal(metadata.packaged, true); assert.equal(metadata.version, expectedVersion);
-  assert.equal(path.resolve(metadata.data).toLowerCase(), DATA.toLowerCase());
+  // Chromium may resolve appData through the Windows known-folder API or APPDATA.
+  assert.ok(path.resolve(metadata.data).toLowerCase()===DATA.toLowerCase() || path.resolve(metadata.data).toLowerCase().startsWith(TEMP.toLowerCase()+path.sep));
+  DATA=metadata.data;
   await page.waitForURL(url => /^http:\/\/127\.0\.0\.1:\d+\//.test(url.href) || url.pathname.endsWith('/envcheck.html'), { timeout: 150000 });
   if (page.url().includes('envcheck.html')) {
     const report=await page.evaluate(()=>window.loopforgeDesktop.check());
@@ -161,7 +166,17 @@ async function main() {
   await expect(page.frameLocator('iframe[src*="/chatbot/"]').locator('.composer-column textarea')).toBeEditable();
   await shot('02-workbench');
   stage=note('optional native CLI onboarding skip');
-  await ps(path.join(__dirname, 'native-dialog.ps1'), ['-AppPid', String(mainPid), '-Evidence', path.join(OUT, '03-native-optional-cli.png')]);
+  try {
+    await ps(path.join(__dirname, 'native-dialog.ps1'), ['-AppPid', String(mainPid), '-Evidence', path.join(OUT, '03-native-optional-cli.png')]);
+  } catch(error) {
+    result.onboardingDiagnostic=await app.evaluate(async ({app,BrowserWindow})=>{
+      const cfg=JSON.parse(require('fs').readFileSync(require('path').join(app.getPath('userData'),'desktop-config.json'),'utf8'));
+      const win=BrowserWindow.getAllWindows()[0];
+      const auth=await win.webContents.executeJavaScript("fetch('/api/auth/current',{credentials:'same-origin'}).then(r=>r.json()).then(d=>({hasUser:!!d.user,guest:d.user?.isGuest,hasIdentity:!!(d.user?.loginName||d.user?.id)})).catch(()=>({failed:true}))");
+      return {cliOnboardingDone:!!cfg.cliOnboardingDone,firstRunDone:!!cfg.firstRunDone,auth};
+    }).catch(e=>({error:e.message}));
+    throw error;
+  }
   pass('optional CLI onboarding skipped with real Windows UI Automation');
   stage=note('project UI creation');
   await page.goto(origin + '/#/projects'); await page.locator('#newProject').click();

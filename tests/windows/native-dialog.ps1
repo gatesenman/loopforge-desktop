@@ -32,4 +32,5 @@ while ((Get-Date) -lt $until) {
   }
   Start-Sleep -Milliseconds 250
 }
+@($buttons | ForEach-Object { @{name=$_.Current.Name;processId=$_.Current.ProcessId;type=$_.Current.ControlType.ProgrammaticName} }) | ConvertTo-Json | Set-Content ($Evidence + '.controls.json') -Encoding utf8
 throw 'Native optional CLI skip button did not appear'
