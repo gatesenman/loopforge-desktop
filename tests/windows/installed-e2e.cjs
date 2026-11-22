@@ -271,8 +271,9 @@ async function main() {
   stage=note('required runtime UI checks');
   await app.evaluate(({Menu})=>Menu.getApplicationMenu().items.find(i=>i.label==='文件').submenu.items.find(i=>i.label==='环境检查…').click());
   await page.waitForURL(/envcheck\.html/);
-  await expect.poll(() => page.locator('body').innerText(), { timeout: 90000 }).toContain('Git');
-  await shot('08-environment-check');
+  await expect(page.locator('#banner')).toHaveClass('banner ok', { timeout: 90000 });
+  await expect(page.locator('#list')).toContainText('npm');
+  await page.screenshot({path:path.join(OUT,'08-environment-check.png'),fullPage:true});
   // Validate actual production check module against installed bundled paths.
   const checks = await app.evaluate(async ({ app }, serverUrl) => {
     const path = process.getBuiltinModule('path');
