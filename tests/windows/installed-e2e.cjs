@@ -251,7 +251,7 @@ async function main() {
   page.on('request',countGenerations);
   await composer.fill('Acceptance without provider credentials must not start a model.');
   await chat.locator('.send-button').click();
-  await expect(chat.locator('.credential-notice')).toBeVisible();
+  await expect(chat.getByRole('button',{name:'去配置 CodeBuddy API Key'})).toBeVisible();
   await expect(composer).toHaveValue('Acceptance without provider credentials must not start a model.');
   assert.equal(generations,0); page.off('request',countGenerations);
   await shot('07b-no-provider-guard'); await composer.fill('');
