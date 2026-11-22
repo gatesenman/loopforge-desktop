@@ -23,7 +23,7 @@ while ((Get-Date) -lt $until) {
   if ($popup -eq $owner) { $popup = [OwnedPopup]::GetWindow($owner,6) }
   if ($popup -ne [IntPtr]::Zero -and $popup -ne $owner -and [OwnedPopup]::IsWindowVisible($popup)) {
     $window = [System.Windows.Automation.AutomationElement]::FromHandle($popup)
-    $buttons = $window.FindAll([System.Windows.Automation.TreeScope]::Descendants,$buttonCondition)
+    $buttons = $window.FindAll([System.Windows.Automation.TreeScope]::Descendants,[System.Windows.Automation.Condition]::TrueCondition)
     $diagnostic=@{window=$window.Current.Name;processId=$window.Current.ProcessId;buttons=@($buttons | ForEach-Object {$_.Current.Name})}
     $rect=$window.Current.BoundingRectangle
     $bounds=New-Object Drawing.Rectangle([int]$rect.X,[int]$rect.Y,[int]$rect.Width,[int]$rect.Height)
@@ -34,10 +34,21 @@ while ((Get-Date) -lt $until) {
     $graphics.Dispose();$bitmap.Dispose()
     foreach($button in $buttons) {
       if($button.Current.Name -like '*稍后再说*') {
-        $button.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
-        Write-Output 'Native optional CLI dialog skipped through Windows UI Automation'
-        exit 0
+        $invoke=$null
+        if($button.TryGetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern,[ref]$invoke)) {
+          $invoke.Invoke()
+          Write-Output 'Native Later command invoked through Windows UI Automation'
+          exit 0
+        }
       }
+    }
+    if($window.Current.Name -eq '安装编码 Agent CLI（可选）') {
+      # TaskDialog command links are not always exposed as UIA Buttons. The real
+      # titlebar Close is the supported cancel action; source cancelId=1 maps it
+      # to Later. This is an actual native UI action, not dialog API replacement.
+      $window.GetCurrentPattern([System.Windows.Automation.WindowPattern]::Pattern).Close()
+      Write-Output 'Native dialog titlebar Close/Cancel (cancelId=1, Later) through Windows UI Automation'
+      exit 0
     }
   }
   Start-Sleep -Milliseconds 250

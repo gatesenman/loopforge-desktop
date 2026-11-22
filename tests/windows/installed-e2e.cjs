@@ -170,6 +170,8 @@ async function main() {
   let skippedCliDialog=false;
   try {
     await ps(path.join(__dirname, 'native-dialog.ps1'), ['-AppPid', String(mainPid), '-MainWindowHandle',mainHandle,'-Evidence', path.join(OUT, '03-native-optional-cli.png')]);
+    await expect.poll(()=>JSON.parse(fs.readFileSync(path.join(DATA,'desktop-config.json'),'utf8')).cliOnboardingDone,{timeout:15000}).toBe(true);
+    await expect.poll(()=>app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].isEnabled())).toBe(true);
     skippedCliDialog=true;
   } catch(error) {
     const cfg=JSON.parse(fs.readFileSync(path.join(DATA,'desktop-config.json'),'utf8'));
@@ -183,7 +185,7 @@ async function main() {
     // Continue other real GUI flows only when no native modal is disabling input.
     if(!mainProbe.enabled) throw error;
   }
-  if(skippedCliDialog) pass('optional CLI onboarding skipped with real Windows UI Automation');
+  if(skippedCliDialog) pass('optional CLI native Later/cancel action persisted and re-enabled main window');
   stage=note('project UI creation');
   await page.goto(origin + '/#/projects'); await page.locator('#newProject').click();
   const wizard = page.locator('#projectWizard');
