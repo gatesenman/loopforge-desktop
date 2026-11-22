@@ -28,6 +28,7 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version: '1.27.3'
+          cache-dependency-path: scripts/vendor-lock.json
 
       - name: Fetch pinned Git / Node / Python
         run: node scripts/fetch-vendors.js

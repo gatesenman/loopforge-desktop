@@ -51,6 +51,10 @@
         "to": "runtime/node"
       },
       {
+        "from": "vendor-dl/node/node_modules",
+        "to": "runtime/node/node_modules"
+      },
+      {
         "from": "vendor-dl/python",
         "to": "runtime/python"
       },

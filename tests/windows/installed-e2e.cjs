@@ -82,7 +82,7 @@ async function quit() {
   await Promise.race([exited, new Promise((_, reject) => setTimeout(() => reject(Error('Graceful menu quit timed out')), 45000))]);
   await expect.poll(async () => { try { await fetch(origin + '/api/health', { signal: AbortSignal.timeout(1000) }); return false; } catch (_) { return true; } }).toBe(true);
   const log = fs.readFileSync(path.join(DATA, 'logs/server.log'), 'utf8');
-  assert.match(log, /server exited code=0/);
+  assert.equal([...log.matchAll(/server exited code=([^ ]+)/g)].at(-1)?.[1], '0');
   pass('graceful menu quit and sidecar exit');
   app = null;
 }
@@ -223,11 +223,16 @@ async function main() {
     const res = process.resourcesPath, runtime = path.join(res, 'runtime');
     const env = { ...process.env };
     env.PATH = [path.join(runtime,'git/cmd'),path.join(runtime,'git/usr/bin'),path.join(runtime,'node'),path.join(runtime,'python'),path.join(process.env.SystemRoot,'System32')].join(';');
+    const execFileSync=require('child_process').execFileSync;
+    const pip=execFileSync(path.join(runtime,'python/python.exe'),['-m','pip','--version'],{env,windowsHide:true,encoding:'utf8',timeout:30000});
+    if(!/pip 24\.3\.1/.test(pip)) throw Error('Installed offline pip unavailable');
+    const bash=execFileSync(path.join(runtime,'git/usr/bin/bash.exe'),['-c','a=(one two); [[ ${a[1]} == two ]] && printf bash-arrays-ok'],{env,windowsHide:true,encoding:'utf8',timeout:30000});
+    if(!bash.includes('bash-arrays-ok')) throw Error('Installed Bash arrays unavailable');
     return runChecks({env, dataDir:app.getPath('userData'), gitDir:path.join(runtime,'git'), nodeDir:path.join(runtime,'node'), pythonDir:path.join(runtime,'python'), serverUrl, requiredOnly:true });
   }, origin);
   assert.equal(checks.summary.requiredOk, true);
   result.requiredTools = checks.results.map(({id,status,level}) => ({id,status,level}));
-  pass('installed bundled Git Bash Node npm Python pip and service required checks');
+  pass('installed bundled Git Bash arrays Node npm Python offline pip and service checks');
   stage = 'return to workbench';
   await app.evaluate(({ Menu }) => { const file=Menu.getApplicationMenu().items.find(i=>i.label==='文件'); file.submenu.items.find(i=>i.label==='重启服务').click(); });
   await page.waitForURL(/^http:\/\/127\.0\.0\.1:\d+\//, { timeout: 150000 }); origin = new URL(page.url()).origin; await loginIfNeeded();
