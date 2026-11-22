@@ -166,18 +166,23 @@ async function main() {
   await expect(page.frameLocator('iframe[src*="/chatbot/"]').locator('.composer-column textarea')).toBeEditable();
   await shot('02-workbench');
   stage=note('optional native CLI onboarding skip');
+  let skippedCliDialog=false;
   try {
     await ps(path.join(__dirname, 'native-dialog.ps1'), ['-AppPid', String(mainPid), '-Evidence', path.join(OUT, '03-native-optional-cli.png')]);
+    skippedCliDialog=true;
   } catch(error) {
-    result.onboardingDiagnostic=await app.evaluate(async ({app,BrowserWindow})=>{
-      const cfg=JSON.parse(require('fs').readFileSync(require('path').join(app.getPath('userData'),'desktop-config.json'),'utf8'));
+    const cfg=JSON.parse(fs.readFileSync(path.join(DATA,'desktop-config.json'),'utf8'));
+    const mainProbe=await app.evaluate(async ({BrowserWindow})=>{
       const win=BrowserWindow.getAllWindows()[0];
-      const auth=await win.webContents.executeJavaScript("fetch('/api/auth/current',{credentials:'same-origin'}).then(r=>r.json()).then(d=>({hasUser:!!d.user,guest:d.user?.isGuest,hasIdentity:!!(d.user?.loginName||d.user?.id)})).catch(()=>({failed:true}))");
-      return {cliOnboardingDone:!!cfg.cliOnboardingDone,firstRunDone:!!cfg.firstRunDone,auth};
+      const auth=await win.webContents.executeJavaScript("fetch('/api/auth/current',{credentials:'same-origin'}).then(r=>r.json()).then(d=>({hasUser:!!d.user,guest:d.user?.isGuest,hasIdentity:!!(d.user?.loginName||d.user?.id)})).catch(()=>({failed:true}))",true);
+      return {enabled:win.isEnabled(),auth};
     }).catch(e=>({error:e.message}));
-    throw error;
+    result.onboardingDiagnostic={cliOnboardingDone:!!cfg.cliOnboardingDone,firstRunDone:!!cfg.firstRunDone,...mainProbe};
+    result.checks.push({name:'optional CLI onboarding offered and skipped',status:'fail',diagnostic:result.onboardingDiagnostic});
+    // Continue other real GUI flows only when no native modal is disabling input.
+    if(!mainProbe.enabled) throw error;
   }
-  pass('optional CLI onboarding skipped with real Windows UI Automation');
+  if(skippedCliDialog) pass('optional CLI onboarding skipped with real Windows UI Automation');
   stage=note('project UI creation');
   await page.goto(origin + '/#/projects'); await page.locator('#newProject').click();
   const wizard = page.locator('#projectWizard');
@@ -254,7 +259,8 @@ async function main() {
   await shot('08-environment-check');
   // Validate actual production check module against installed bundled paths.
   const checks = await app.evaluate(async ({ app }, serverUrl) => {
-    const path = require('path');
+    const path = process.getBuiltinModule('path');
+    const require = process.getBuiltinModule('module').createRequire(path.join(app.getAppPath(),'package.json'));
     const { runChecks } = require(path.join(app.getAppPath(), 'src/envcheck.js'));
     const res = process.resourcesPath, runtime = path.join(res, 'runtime');
     const env = { ...process.env };
