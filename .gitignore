@@ -22,3 +22,5 @@ coverage/
 !.env.example.*
 
 .e2e-evidence/
+
+.legacy-installer-evidence/
