@@ -31,11 +31,11 @@ let baselineVersion = '0.4.0';
 let authenticated = false;
 let workspaceFiles = [];
 const password = 'Acceptance-' + crypto.randomBytes(20).toString('hex') + '!';
-function note(value) { console.log('STAGE', value); return value; }
+function note(value) { console.log('STAGE', value); if(monitor) fs.writeFileSync(path.join(TEMP,'acceptance-phase.txt'),value); return value; }
 function pass(name, details = {}) { result.checks.push({ name, status: 'pass', ...details }); console.log('PASS', name); }
 function filesBelow(dir) { return fs.readdirSync(dir, {withFileTypes:true}).flatMap(e => e.isDirectory() ? filesBelow(path.join(dir,e.name)) : [path.join(dir,e.name)]); }
 function sha(file) { return crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex'); }
-function ps(file, args = []) { return exec('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', file, ...args], { windowsHide: true, timeout: 240000 }); }
+function ps(file, args = []) { const p=exec('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', file, ...args], { windowsHide: true, timeout: 240000 }); (result.harnessHelpers ||= []).push({pid:p.child.pid,script:path.basename(file)}); return p; }
 async function shot(name) { await page.screenshot({ path: path.join(OUT, name + '.png') }); }
 async function install(file) {
   await ps(path.join(__dirname,'install.ps1'), ['-Installer',file,'-Destination',INSTALL,'-WaitSeconds',file===oldInstaller?'45':'120']);
@@ -61,7 +61,7 @@ async function launch(expectedVersion) {
   page.setDefaultTimeout(45000);
   const metadata = await app.evaluate(({ app }) => ({ packaged: app.isPackaged, version: app.getVersion(), data: app.getPath('userData'), mainPid:process.pid, versions:{electron:process.versions.electron,chrome:process.versions.chrome,embeddedNode:process.versions.node,platform:process.platform,arch:process.arch} }));
   result.electronRuntime=metadata.versions;
-  mainPid=metadata.mainPid;
+  mainPid=metadata.mainPid; (result.mainProcesses ||= []).push({pid:mainPid,version:expectedVersion});
   mainHandle=await app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].getNativeWindowHandle().readBigUInt64LE().toString());
   assert.equal(metadata.packaged, true); assert.equal(metadata.version, expectedVersion);
   // Chromium may resolve appData through the Windows known-folder API or APPDATA.
@@ -166,7 +166,7 @@ async function main() {
     assert.ok(fs.existsSync(executablePath)); assert.ok(fs.existsSync(path.join(INSTALL,'resources/app.asar')));
     pass('real published 0.4.0 payload extracted for data-only migration (not legacy installation)');
   }
-  monitor = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', path.join(__dirname, 'console-monitor.ps1'), '-StopFile', path.join(TEMP, 'stop-monitor'), '-OutputFile', path.join(OUT, 'console-windows.json')], { windowsHide: true, stdio: 'ignore' });
+  monitor = spawn('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', path.join(__dirname, 'console-monitor.ps1'), '-StopFile', path.join(TEMP, 'stop-monitor'), '-OutputFile', path.join(OUT, 'console-windows.json'), '-PhaseFile',path.join(TEMP,'acceptance-phase.txt')], { windowsHide: true, stdio: 'ignore' });
   await expect.poll(() => fs.existsSync(path.join(OUT, 'console-windows.json.ready')), {timeout:30000}).toBe(true);
   stage=note('first installed GUI launch'); await launch(baselineVersion);
   await expect(page.locator('#setupNotice')).toBeVisible(); await shot('01-first-account-empty');
@@ -314,6 +314,7 @@ async function main() {
   stage=note('current graceful quit and relaunch'); await quit(); authenticated = false;
   await launch(version); await loginIfNeeded(); assert.equal((await api('/api/runs/'+runId)).status, 'succeeded');
   await shot('10-relaunched'); pass('current version quit/relaunch persistence'); await quit(); authenticated = false;
+  stage=note('Docker console and shortcut gates');
   assert.ok(!fs.existsSync(path.join(TEMP,'unexpected-docker-call'))); pass('no Docker invocation throughout GUI acceptance');
   fs.writeFileSync(path.join(TEMP,'stop-monitor'), 'stop'); await once(monitor,'exit'); monitor=null;
   const consoles=JSON.parse(fs.readFileSync(path.join(OUT,'console-windows.json'),'utf8').replace(/^\uFEFF/,'')); assert.deepEqual(consoles,[]); pass('no new visible console windows observed at 20ms sampling');
