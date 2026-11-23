@@ -6,7 +6,7 @@ A one-installer Windows desktop build of [Tencent/LoopForge](https://github.com/
 
 This is a community desktop package, not an official Tencent release.
 
-[Download LoopForge-Setup-0.4.0.exe](https://github.com/gatesenman/loopforge-desktop/releases/latest)
+[Download LoopForge-Setup-0.4.1.exe](https://github.com/gatesenman/loopforge-desktop/releases/download/v0.4.1/LoopForge-Setup-0.4.1.exe)
 
 <p align="center">
   <img src="docs/screenshots/startup.png" alt="LoopForge Desktop starting up" width="720">
@@ -14,7 +14,7 @@ This is a community desktop package, not an official Tencent release.
 
 ## What you get
 
-| | Desktop build 0.4.0 |
+| | Desktop build 0.4.1 |
 | --- | --- |
 | Runtime | Local process + SQLite under `%APPDATA%\LoopForge` |
 | Bundled tools | Git for Windows **MinGit** (git + real GNU Bash/sh), Node.js 22 (with npm), Python 3.11 |
@@ -37,7 +37,7 @@ The workbench above is the in-app LoopForge UI (upstream interface) after you cr
 
 ## Install and first run
 
-1. Download `LoopForge-Setup-0.4.0.exe` from [Releases](https://github.com/gatesenman/loopforge-desktop/releases) and run it (per-user install, Start Menu and desktop shortcuts).
+1. Download `LoopForge-Setup-0.4.1.exe` (230,657,705 bytes, SHA256 `3b919e8ae5fa7a8e28838b4ce8bf661d1ef74a41c44ef937ae26ccaa163606e0`) from the [v0.4.1 release](https://github.com/gatesenman/loopforge-desktop/releases/tag/v0.4.1) and run it (per-user install, Start Menu and desktop shortcuts).
 2. The installer is **not code-signed**. Windows SmartScreen may warn you — choose **Run anyway**. The same prompt can appear again after an in-app update.
 3. On first start the app boots the local server (about 10–30 seconds while it initializes the database) and, when the bundled tools are healthy, opens the login / workbench directly.
 4. Create the first administrator account on the login page.
@@ -79,6 +79,12 @@ npm run dist
 The output is `dist/LoopForge-Setup-<version>.exe` plus `latest.yml` (for GitHub Releases auto-update).
 
 ## Changelog
+
+### 0.4.1
+
+Current published Windows installer: [LoopForge-Setup-0.4.1.exe](https://github.com/gatesenman/loopforge-desktop/releases/download/v0.4.1/LoopForge-Setup-0.4.1.exe) (230,657,705 bytes, SHA256 `3b919e8ae5fa7a8e28838b4ce8bf661d1ef74a41c44ef937ae26ccaa163606e0`). The Windows installer workflow for tag `v0.4.1` succeeded ([run 45042357102](https://github.com/gatesenman/loopforge-desktop/actions/runs/45042357102)). A later GUI retest on `main` also succeeded ([run 45041025201](https://github.com/gatesenman/loopforge-desktop/actions/runs/45041025201)). An earlier GUI retest the same day failed ([run 45040643538](https://github.com/gatesenman/loopforge-desktop/actions/runs/45040643538), extra visible console windows). Do not treat 0.4.1 as untested because of that earlier failure, and do not treat every GUI path as permanently green either. See [docs/WINDOWS-ACCEPTANCE.md](docs/WINDOWS-ACCEPTANCE.md). The installer is still unsigned.
+
+Screenshots in this README are existing real captures already in `docs/screenshots/`; no generated UI images were added.
 
 ### 0.4.0
 
