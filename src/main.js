@@ -8,6 +8,7 @@ const { pathToFileURL } = require('url');
 const { spawn, execFile } = require('child_process');
 const { runChecks, pathKey, requiredReady, npmCliJs, firstExisting, which } = require('./envcheck');
 const secret = require('./secret');
+const { readConfig, writeConfig } = require('./config-store');
 const { requiredChecksPass } = require('./startup-check');
 const { setupAutoUpdate } = require('./updater');
 const { exportDiagnostics } = require('./diagnostics');
@@ -48,8 +49,9 @@ let onboardingTimer = null;
 
 // ---------- config ----------
 function loadConfig() {
-  let cfg = {};
-  try { cfg = JSON.parse(fs.readFileSync(CONFIG_PATH, 'utf8')); } catch (_) { /* first run */ }
+  const loaded = readConfig(CONFIG_PATH);
+  const cfg = loaded.config;
+  if (loaded.recovered) cfg.configRecoveryNotice = true;
   secret.fromDisk(cfg, isWin);
   if (cfg.sessionSecretEnc && !cfg.sessionSecret) cfg.secretRecoveryNotice = true;
   let dirty = false;
@@ -70,7 +72,7 @@ function saveConfig(cfg) {
   const disk = secret.toDisk({ ...cfg }, isWin);
   cfg.secretStorage = disk.sessionSecretEnc ? 'dpapi' : 'plaintext-fallback';
   disk.secretStorage = cfg.secretStorage;
-  fs.writeFileSync(CONFIG_PATH, JSON.stringify(disk, null, 2));
+  writeConfig(CONFIG_PATH, disk);
 }
 let config;
 
@@ -655,7 +657,11 @@ if (!app.requestSingleInstanceLock()) {
     if (mainWindow) { if (mainWindow.isMinimized()) mainWindow.restore(); mainWindow.focus(); }
   });
   app.whenReady().then(async () => {
-    config = loadConfig();
+    try { config = loadConfig(); } catch (_) {
+      dialog.showErrorBox('LoopForge 配置无法安全加载', '配置或备份损坏，或数据目录不可读写。为保护数据，已停止启动。请保留 desktop-config.json 与 .bak 文件，备份数据目录后修复配置。');
+      app.quit();
+      return;
+    }
     buildMenu();
     updater = setupAutoUpdate({
       isWin,
@@ -664,6 +670,10 @@ if (!app.requestSingleInstanceLock()) {
       log: (m) => appendLog(m),
     });
     createMainWindow();
+    if (config.configRecoveryNotice) {
+      dialog.showMessageBox(mainWindow, { type: 'warning', message: '桌面配置已从备份恢复。', detail: '最近一次设置可能需要重新选择；数据库与项目数据未改动。配置备份也含敏感信息，请勿分享。' });
+      delete config.configRecoveryNotice; saveConfig(config);
+    }
     if (config.secretRecoveryNotice) {
       dialog.showMessageBox(mainWindow, { type: 'warning', message: '会话保护密钥无法解密，已安全重建。', detail: '现有登录会话将失效，请重新登录；数据库与项目数据不会删除。' });
       delete config.secretRecoveryNotice; saveConfig(config);

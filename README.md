@@ -98,3 +98,15 @@ Issues and pull requests are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md). Pl
 ## License
 
 Upstream LoopForge is MIT. The installer also includes Git for Windows, Node.js, CPython, and Electron/Chromium under their own licenses — see `licenses/` and **Help → Open-source licenses**. This packaging does not change the upstream license.
+
+### Desktop configuration recovery
+
+Settings are written to a same-directory temporary file, flushed, and renamed.
+The previous valid configuration is retained as `desktop-config.json.bak`. A
+missing or malformed primary configuration recovers from a valid backup with a
+warning; if neither copy is valid, startup stops instead of silently rotating
+the session secret. Recovery does not delete databases or workspaces. Backups
+may contain sensitive data and must not be shared; diagnostics exclude them.
+Storage exhaustion, permissions, or antivirus file locks can still prevent a
+save. This is configuration recovery, not a database backup or a substitute
+for backing up the entire data directory.
