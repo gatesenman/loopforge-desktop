@@ -6,7 +6,7 @@
 
 这是社区桌面封装，不是腾讯官方发布的安装包。
 
-[下载 LoopForge-Setup-0.4.0.exe](https://github.com/gatesenman/loopforge-desktop/releases/latest)
+[下载 LoopForge-Setup-0.4.2.exe](https://github.com/gatesenman/loopforge-desktop/releases/latest)
 
 <p align="center">
   <img src="docs/screenshots/startup.png" alt="LoopForge 桌面版启动画面" width="720">
@@ -14,7 +14,7 @@
 
 ## 你能直接用到什么
 
-| | 桌面版 0.4.0 |
+| | 桌面版 0.4.2 |
 | --- | --- |
 | 运行方式 | 本机进程 + `%APPDATA%\LoopForge` 下的 SQLite |
 | 已内置 | Git for Windows **MinGit**（git 与 sh/bash）、Node.js 22（含 npm）、Python 3.11 |
@@ -37,7 +37,7 @@
 
 ## 安装与首次使用
 
-1. 从 [Releases](https://github.com/gatesenman/loopforge-desktop/releases) 下载 `LoopForge-Setup-0.4.0.exe` 并运行（当前用户安装，带开始菜单和桌面快捷方式）。
+1. 从 [Releases](https://github.com/gatesenman/loopforge-desktop/releases) 下载 `LoopForge-Setup-0.4.2.exe` 并运行（当前用户安装，带开始菜单和桌面快捷方式）。
 2. 安装包 **没有代码签名**。Windows SmartScreen 可能会提示，选择「仍要运行」即可。应用内更新之后也可能再次出现该提示。
 3. 第一次打开会先启动本地服务（初始化数据库大约 10–30 秒）。内置运行时正常时，会直接进入登录 / 工作台。
 4. 在登录页创建第一个管理员账号。
@@ -79,6 +79,13 @@ npm run dist
 生成文件为 `dist/LoopForge-Setup-<version>.exe`，以及供 GitHub Releases 自动更新使用的 `latest.yml`。
 
 ## 更新说明
+
+### 0.4.2
+
+- 原子配置保存与有效备份恢复；服务启动/重启串行与取消过期重启。
+- 精确来源导航限制；预览窗口不继承本地特权 preload。
+- 环境探针不覆盖用户文件；本地日志限额及异步错误保护。
+- 固定上游加补丁的完整源码导出及逐文件来源核验；增强原生 Windows 包内容与 GUI 回归门禁。
 
 ### 0.4.0
 

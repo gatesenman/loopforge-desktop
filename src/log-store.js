@@ -13,6 +13,7 @@ function readTail(file, limit = 64 * 1024) {
   finally { if (fd !== undefined) fs.closeSync(fd); }
 }
 function openBoundedLog(file, { maxBytes = 10 * 1024 * 1024, onError = () => {} } = {}) {
+  let closed = Promise.resolve();
   let stream; let ended = false; let failed = false; let bytes = 0;
   const fail = () => { if (!failed) { failed = true; onError(); } };
   try {
@@ -20,6 +21,7 @@ function openBoundedLog(file, { maxBytes = 10 * 1024 * 1024, onError = () => {} 
     try { bytes = fs.statSync(file).size; } catch (e) { if (e.code !== 'ENOENT') throw e; }
     if (bytes >= maxBytes) { fs.renameSync(file, file + '.1'); bytes = 0; }
     stream = fs.createWriteStream(file, { flags: 'a', mode: 0o600 });
+    closed = new Promise(resolve => stream.once('close', resolve));
     stream.on('error', fail); // Disk-full/ACL errors must never crash Electron.
   } catch (_) { fail(); }
   return {
@@ -34,7 +36,7 @@ function openBoundedLog(file, { maxBytes = 10 * 1024 * 1024, onError = () => {} 
         bytes += final.length; stream.write(final);
       } else { bytes += data.length; stream.write(data); }
     },
-    end() { if (!ended) { ended = true; if (stream) stream.end(); } },
+    end() { if (!ended) { ended = true; if (stream) stream.end(); } return closed; },
     get failed() { return failed; },
   };
 }

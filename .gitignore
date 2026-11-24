@@ -24,3 +24,5 @@ coverage/
 .e2e-evidence/
 
 .legacy-installer-evidence/
+
+release-artifacts/

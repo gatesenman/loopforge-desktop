@@ -268,6 +268,38 @@ async function main() {
   assert.equal(generations,0); page.off('request',countGenerations);
   await shot('07b-no-provider-guard'); await composer.fill('');
   pass('missing-provider UI guard retains draft and does not submit generation');
+  stage=note('installed wrapper safety regressions');
+  const wrapperSafety = await app.evaluate(async ({ app, BrowserWindow }, fixtureRoot) => {
+    const path = process.getBuiltinModule('path');
+    const fs = process.getBuiltinModule('fs');
+    const require = process.getBuiltinModule('module').createRequire(path.join(app.getAppPath(), 'package.json'));
+    const { readConfig, writeConfig } = require('./src/config-store');
+    const { checkDataDir } = require('./src/envcheck');
+    const dir = path.join(fixtureRoot, 'wrapper-safety'); fs.mkdirSync(dir, {recursive:true});
+    const file = path.join(dir, 'desktop-config.json');
+    writeConfig(file, {port:18090}); writeConfig(file, {port:18091}); fs.writeFileSync(file, '{truncated');
+    const recovered = readConfig(file); writeConfig(file, recovered.config);
+    const sentinel = path.join(dir, '.write-test'); fs.writeFileSync(sentinel, 'MUST SURVIVE');
+    const check = checkDataDir(dir);
+    const unchanged = fs.readFileSync(sentinel, 'utf8') === 'MUST SURVIVE';
+    let denied = false;
+    BrowserWindow.getAllWindows()[0].webContents.emit('will-navigate', {preventDefault(){denied=true;}}, 'javascript:alert(1)');
+    return { recovered: recovered.recovered && recovered.config.port===18090, probeUnchanged:unchanged, probeStatus:check.status, unsafeNavigationDenied:denied };
+  }, TEMP);
+  assert.equal(wrapperSafety.recovered,true); assert.equal(wrapperSafety.probeUnchanged,true);
+  assert.notEqual(wrapperSafety.probeStatus,'error'); assert.equal(wrapperSafety.unsafeNavigationDenied,true);
+  pass('installed production config recovery, non-destructive probe and navigation handler',wrapperSafety);
+  stage=note('double restart menu lifecycle');
+  const startsBeforeRestart=(fs.readFileSync(path.join(DATA,'logs/server.log'),'utf8').match(/ starting /g)||[]).length;
+  await app.evaluate(async ({Menu}) => {
+    const item=Menu.getApplicationMenu().items.find(i=>i.label==='文件').submenu.items.find(i=>i.label==='重启服务');
+    await Promise.all([item.click(), item.click()]);
+  });
+  await expect.poll(()=>(fs.readFileSync(path.join(DATA,'logs/server.log'),'utf8').match(/ starting /g)||[]).length,{timeout:150000}).toBeGreaterThanOrEqual(startsBeforeRestart+2);
+  await page.waitForURL(/^http:\/\/127\.0\.0\.1:\d+\//, {timeout:150000});
+  origin=new URL(page.url()).origin; await loginIfNeeded();
+  assert.equal((await api('/api/projects/'+projectId)).name,'Native Windows Acceptance');
+  pass('concurrent restart requests completed with persisted project and healthy workbench');
   stage=note('required runtime UI checks');
   await app.evaluate(({Menu})=>Menu.getApplicationMenu().items.find(i=>i.label==='文件').submenu.items.find(i=>i.label==='环境检查…').click());
   await page.waitForURL(/envcheck\.html/);

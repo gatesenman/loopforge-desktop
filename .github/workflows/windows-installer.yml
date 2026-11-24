@@ -61,6 +61,9 @@ jobs:
           CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
         run: npm run dist
 
+      - name: Verify installer payload, source, subsystem and updater hashes
+        run: npm run verify-package
+
       - name: Installed Windows Electron GUI acceptance (synthetic data, no provider)
         timeout-minutes: 15
         env:
@@ -87,6 +90,7 @@ jobs:
             dist/LoopForge-Setup-*.exe
             dist/LoopForge-Setup-*.exe.blockmap
             dist/latest.yml
+            dist/package-verification.json
             resources/bin/build-manifest.json
             .smoke/result.json
             .smoke/console-regression.json

@@ -1,0 +1,35 @@
+#!/usr/bin/env node
+"use strict";
+const fs = require('fs');
+const path = require('path');
+const { execFileSync } = require('child_process');
+const { prepareSource, sourceHashes, verifySource } = require('./prepare-source');
+const { addFile, writeZip, walkDir } = require('../src/zipfile');
+const root = path.resolve(__dirname, '..');
+const lock = require('./vendor-lock.json').loopforge;
+const version = require('../package.json').version;
+const git = args => execFileSync('git', args, { cwd: root, encoding: 'utf8', windowsHide: true }).trim();
+if (git(['status', '--porcelain', '--untracked-files=normal'])) throw new Error('Source export requires a clean committed checkout');
+const commit = git(['rev-parse', 'HEAD']);
+const date = new Date(git(['show', '-s', '--format=%cI', 'HEAD']));
+const out = path.resolve(process.env.LOOPFORGE_RELEASE_DIR || path.join(root, 'release-artifacts'));
+const name = `LoopForge-${version}-complete-source-${commit.slice(0,7)}`;
+const bundle = path.join(out, name);
+if (fs.existsSync(bundle)) throw new Error('Source destination already exists; use a fresh release directory');
+fs.mkdirSync(path.join(bundle, 'desktop'), { recursive: true });
+const wrapperTar = path.join(out, name + '.tar');
+git(['archive', '--format=tar', '-o', wrapperTar, commit]);
+execFileSync('tar', ['-xf', wrapperTar, '-C', path.join(bundle, 'desktop')], { stdio: 'inherit', windowsHide: true });
+const prepared = prepareSource(root, path.join(bundle, 'upstream'), lock);
+const manifest = { version, desktopCommit: commit, upstreamUrl: lock.repo, upstreamCommit: lock.commit,
+  patchSha256: lock.patchSha256, upstreamSymlinks: prepared.symlinks, desktopFiles: sourceHashes(path.join(bundle, 'desktop')), upstreamFiles: sourceHashes(path.join(bundle, 'upstream')) };
+fs.writeFileSync(path.join(bundle, 'source-manifest.json'), JSON.stringify(manifest, null, 2) + '\n');
+fs.writeFileSync(path.join(bundle, '源码构建说明.txt'), `完整源码：desktop 为桌面封装；upstream 为固定上游提交加已验证补丁，包含完整静态资源，不依赖原工作区缺失文件。上游3个技能目录符号链接为跨平台可读的目标文本文件，原始链接目标记录于 source-manifest.json 的 upstreamSymlinks；POSIX 可据此恢复。这不影响应用构建。\n上游 ${lock.commit}\n桌面 ${commit}\n在 Windows 安装锁定 Node ${require('./vendor-lock.json').node.version} 和 ${lock.goVersion}，PowerShell 进入 desktop：\nnpm ci\n$env:LOOPFORGE_SOURCE_BUNDLE=(Resolve-Path ..).Path\nnpm run fetch-vendors\nnpm run build-bins\nnpm test\nnpm run smoke:windows\nnpm run dist\nnpm run verify-package\n构建前逐文件校验上游源码与清单；会下载锁定第三方依赖，非全离线包，不保证跨系统二进制逐字节相同。\n`);
+verifySource(path.join(bundle, 'upstream'), manifest.upstreamFiles);
+verifySource(path.join(bundle, 'desktop'), manifest.desktopFiles);
+const entries = [];
+for (const file of walkDir(bundle).sort((a,b) => a.name.localeCompare(b.name, 'en'))) addFile(entries, name + '/' + file.name, fs.readFileSync(file.file), date);
+const zip = path.join(out, name + '.zip');
+writeZip(entries, zip);
+fs.unlinkSync(wrapperTar);
+console.log(JSON.stringify({ zip, bundle, upstreamFiles: Object.keys(manifest.upstreamFiles).length, desktopFiles: Object.keys(manifest.desktopFiles).length, commit }, null, 2));

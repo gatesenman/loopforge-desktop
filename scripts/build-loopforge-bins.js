@@ -27,30 +27,7 @@ const patch = path.join(ROOT, lock.patch);
 if (sha(patch) !== lock.patchSha256) throw new Error('Desktop patch SHA256 mismatch');
 const goVersion = output('go', ['version']).split(' ')[2];
 if (goVersion !== lock.goVersion) throw new Error(`Use pinned ${lock.goVersion}, found ${goVersion}`);
-fs.mkdirSync(OWN, { recursive: true });
-let repo = process.env.LOOPFORGE_SRC;
-if (!repo && fs.existsSync('/workspace/LoopForge/.git')) repo = '/workspace/LoopForge';
-if (!repo) {
-  repo = path.join(OWN, 'upstream');
-  if (!fs.existsSync(path.join(repo, '.git'))) {
-    fs.mkdirSync(repo, { recursive: true });
-    run('git', ['init', repo]);
-  }
-  run('git', ['-c', 'core.longpaths=true', 'fetch', '--depth=1', lock.repo, lock.commit], { cwd: repo });
-}
-const actual = output('git', ['rev-parse', `${lock.commit}^{commit}`], { cwd: repo });
-if (actual !== lock.commit) throw new Error('Pinned commit unavailable');
-// Archive ignores ALL local changes. Remove only this script's prepared output.
-fs.rmSync(SOURCE, { recursive: true, force: true });
-fs.mkdirSync(SOURCE, { recursive: true });
-const archive = path.join(OWN, 'upstream.tar');
-run('git', ['archive', '--format=tar', '-o', archive, lock.commit], { cwd: repo });
-run('tar', ['-xf', archive, '-C', SOURCE]);
-// Isolate git apply from the outer desktop repository (vendor-dl is ignored).
-run('git', ['init', SOURCE]);
-run('git', ['config', 'core.longpaths', 'true'], { cwd: SOURCE });
-run('git', ['apply', '--check', patch], { cwd: SOURCE });
-run('git', ['apply', '--whitespace=nowarn', patch], { cwd: SOURCE });
+require('./prepare-source').prepareSource(ROOT, SOURCE, lock);
 // npm.cmd must not be spawned directly or shell:true. Invoke npm-cli via node.
 const npmCli = process.env.npm_execpath || path.join(path.dirname(process.execPath), 'node_modules/npm/bin/npm-cli.js');
 if (!fs.existsSync(npmCli)) throw new Error(`npm-cli.js not found: ${npmCli}; invoke via npm run build-bins`);

@@ -89,3 +89,29 @@ Updates download and prompt; “Later” never installs automatically on quit.
 Explicit restart drains/stops the sidecar before quitAndInstall.
 Builds are unsigned unless CSC_LINK/CSC_KEY_PASSWORD are configured. SmartScreen
 may warn. Never disable rcedit/signAndEditExecutable: icons must remain stamped.
+
+## Complete-source delivery (0.4.2+)
+
+`npm run export-source` requires a clean committed checkout. It archives the
+desktop commit, obtains the pinned upstream tree from Git objects (never the
+dirty checkout), verifies/applies the locked patch, and exports every upstream
+file including VS Code static assets. Three upstream POSIX skill symlinks are
+portable target-text files; `upstreamSymlinks` retains their original targets.
+The resulting ZIP contains desktop/, upstream/, per-file SHA256 source manifest,
+and Chinese rebuild instructions. Generated dependencies/binaries are excluded.
+
+To rebuild from the bundle on Windows, use the pinned Node/Go toolchains, enter
+desktop/, run `npm ci`, set `LOOPFORGE_SOURCE_BUNDLE` to the parent directory, then
+run fetch-vendors, build-bins, test, smoke:windows, dist and verify-package. The
+build checks the bundled upstream file set and hashes before copying it to its
+own prepared build directory. Internet access is needed for locked dependencies.
+This is reproducible provenance, not a promise of identical cross-OS PE bytes.
+
+`npm run verify-package` checks app.asar files against the source checkout,
+package version, pinned build provenance, all binary hashes/lengths, GUI PE
+subsystems, required offline runtime resources, and latest.yml SHA512/size.
+Windows CI performs this before installed GUI acceptance. GUI acceptance also
+checks real installed configuration recovery, non-destructive probes, production
+navigation handler denial and two simultaneous menu restarts with persisted data.
+Windows CI/Server evidence does not replace Windows 10/11 human acceptance,
+SmartScreen/interactive installer testing or real provider account testing.

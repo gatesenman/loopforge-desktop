@@ -5,7 +5,6 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { readTail, openBoundedLog } = require('../src/log-store');
-const tick = () => new Promise(r => setTimeout(r, 30));
 test('tail reader is bounded and missing logs are optional', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'lf-tail-'));
   try {
@@ -18,9 +17,9 @@ test('logger caps bytes, ignores writes after end, and rotates on next startup',
   try {
     const file = path.join(dir, 'log');
     const log = openBoundedLog(file, { maxBytes: 256 });
-    log.write('x'.repeat(1000)); log.write('ignored'); log.end(); log.write('late');
-    await tick(); assert.equal(fs.statSync(file).size, 256); assert.match(readTail(file), /log size limit/);
-    const next = openBoundedLog(file, { maxBytes: 256 }); next.write('fresh'); next.end(); await tick();
+    log.write('x'.repeat(1000)); log.write('ignored'); const closed = log.end(); log.write('late');
+    await closed; assert.equal(fs.statSync(file).size, 256); assert.match(readTail(file), /log size limit/);
+    const next = openBoundedLog(file, { maxBytes: 256 }); next.write('fresh'); await next.end();
     assert.equal(readTail(file), 'fresh'); assert.equal(fs.statSync(file + '.1').size, 256);
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });
@@ -28,7 +27,7 @@ test('asynchronous stream-open failure is handled once, without uncaught error',
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'lf-error-'));
   try {
     let errors = 0; const log = openBoundedLog(dir, { onError: () => errors++ });
-    log.write('test'); await tick(); log.write('late'); log.end();
+    log.write('test'); await log.end(); log.write('late');
     assert.equal(log.failed, true); assert.equal(errors, 1);
   } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });

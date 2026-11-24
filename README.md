@@ -6,7 +6,7 @@ A one-installer Windows desktop build of [Tencent/LoopForge](https://github.com/
 
 This is a community desktop package, not an official Tencent release.
 
-[Download LoopForge-Setup-0.4.0.exe](https://github.com/gatesenman/loopforge-desktop/releases/latest)
+[Download LoopForge-Setup-0.4.2.exe](https://github.com/gatesenman/loopforge-desktop/releases/latest)
 
 <p align="center">
   <img src="docs/screenshots/startup.png" alt="LoopForge Desktop starting up" width="720">
@@ -14,7 +14,7 @@ This is a community desktop package, not an official Tencent release.
 
 ## What you get
 
-| | Desktop build 0.4.0 |
+| | Desktop build 0.4.2 |
 | --- | --- |
 | Runtime | Local process + SQLite under `%APPDATA%\LoopForge` |
 | Bundled tools | Git for Windows **MinGit** (git + real GNU Bash/sh), Node.js 22 (with npm), Python 3.11 |
@@ -37,7 +37,7 @@ The workbench above is the in-app LoopForge UI (upstream interface) after you cr
 
 ## Install and first run
 
-1. Download `LoopForge-Setup-0.4.0.exe` from [Releases](https://github.com/gatesenman/loopforge-desktop/releases) and run it (per-user install, Start Menu and desktop shortcuts).
+1. Download `LoopForge-Setup-0.4.2.exe` from [Releases](https://github.com/gatesenman/loopforge-desktop/releases) and run it (per-user install, Start Menu and desktop shortcuts).
 2. The installer is **not code-signed**. Windows SmartScreen may warn you — choose **Run anyway**. The same prompt can appear again after an in-app update.
 3. On first start the app boots the local server (about 10–30 seconds while it initializes the database) and, when the bundled tools are healthy, opens the login / workbench directly.
 4. Create the first administrator account on the login page.
@@ -79,6 +79,13 @@ npm run dist
 The output is `dist/LoopForge-Setup-<version>.exe` plus `latest.yml` (for GitHub Releases auto-update).
 
 ## Changelog
+
+### 0.4.2
+
+- Recoverable atomic desktop settings; serialized sidecar restart/shutdown.
+- Exact-origin navigation and isolated preview windows without privileged preload.
+- Non-destructive environment probes and bounded, failure-safe local logs.
+- Complete pinned upstream + patch source export with per-file provenance checks; stronger native Windows package/GUI gates.
 
 ### 0.4.0
 
