@@ -9,6 +9,8 @@ const { spawn, execFile } = require('child_process');
 const { runChecks, pathKey, requiredReady, npmCliJs, firstExisting, which } = require('./envcheck');
 const secret = require('./secret');
 const { readConfig, writeConfig } = require('./config-store');
+const { createLifecycle } = require('./lifecycle');
+const lifecycle = createLifecycle();
 const { requiredChecksPass } = require('./startup-check');
 const { setupAutoUpdate } = require('./updater');
 const { exportDiagnostics } = require('./diagnostics');
@@ -183,8 +185,10 @@ function startHealthWatch(s) {
     if (!s || s.stopping || s.exited || quitting || server !== s) return;
     try {
       const res = await fetch(s.url + '/api/health', { signal: AbortSignal.timeout(4000) });
+      if (s.stopping || s.exited || quitting || server !== s) return;
       if (res.ok) { healthFails = 0; return; }
     } catch (_) { /* down */ }
+    if (s.stopping || s.exited || quitting || server !== s) return;
     healthFails += 1;
     appendLog(`===== health check failed (${healthFails}/${HEALTH_FAILS_BEFORE_RESTART}) =====`);
     if (healthFails >= HEALTH_FAILS_BEFORE_RESTART) {
@@ -195,7 +199,7 @@ function startHealthWatch(s) {
       // exit handler will schedule the supervisor restart
     }
   }, HEALTH_INTERVAL_MS);
-  stableTimer = setTimeout(() => { restartAttempts = 0; }, STABLE_MS_BEFORE_RESET);
+  stableTimer = setTimeout(() => { if (server === s && !s.exited && !s.stopping && !quitting) restartAttempts = 0; }, STABLE_MS_BEFORE_RESET);
 }
 
 async function startServer() {
@@ -219,18 +223,26 @@ async function startServer() {
   proc.stderr.on('data', (b) => serverLog && serverLog.write(b));
   proc.on('exit', (code, sig) => {
     s.exited = true;
-    clearHealthTimers();
+    if (server === s) clearHealthTimers();
     if (serverLog) serverLog.write(`===== server exited code=${code} signal=${sig} =====\n`);
-    if (!s.stopping && !quitting && server === s) scheduleRestart(code);
+    if (s.ready && !s.stopping && !quitting && server === s) scheduleRestart(code);
   });
-  await waitHealthy(s, 120000);
-  startHealthWatch(s);
+  try {
+    await waitHealthy(s, 120000);
+    if (quitting || s.stopping || s.exited || server !== s) throw new Error('启动已取消');
+    s.ready = true;
+    startHealthWatch(s);
+  } catch (err) {
+    if (server === s) await stopServer();
+    throw err;
+  }
   return s;
 }
 
 async function waitHealthy(s, timeoutMs) {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
+    if (quitting || s.stopping || server !== s) throw new Error('启动已取消');
     if (s.exited) throw new Error('服务启动失败：\n' + tailLog());
     try {
       const res = await fetch(s.url + '/api/health', { signal: AbortSignal.timeout(2000) });
@@ -280,12 +292,7 @@ function scheduleRestart(code) {
   restartAttempts += 1;
   appendLog(`===== supervisor restart ${restartAttempts}/${SUPERVISOR_MAX_RESTARTS} in ${delay}ms =====`);
   if (mainWindow) mainWindow.loadURL(splashURL(`服务已退出，正在第 ${restartAttempts} 次自动重启…`));
-  setTimeout(() => {
-    if (quitting) return;
-    bootServerIntoWindow({ resume: true, fromCrash: true }).catch((e) => {
-      showError('LoopForge 服务重启失败', String(e && e.message || e));
-    });
-  }, delay);
+  lifecycle.schedule(() => bootServerIntoWindowNow({ resume: true, fromCrash: true }), delay);
 }
 
 // ---------- windows ----------
@@ -352,7 +359,11 @@ async function collectChecks(requiredOnly = false) {
   });
 }
 
-async function bootServerIntoWindow(opts = {}) {
+function bootServerIntoWindow(opts = {}) {
+  return lifecycle.run(() => bootServerIntoWindowNow(opts));
+}
+async function bootServerIntoWindowNow(opts = {}) {
+  if (quitting) return;
   const forceEnv = !!opts.forceEnv || process.argv.includes('--env-check');
   try {
     bootState = 'starting';
@@ -365,7 +376,7 @@ async function bootServerIntoWindow(opts = {}) {
       if (server && server.exited) server = null;
       await startServer();
     }
-    if (!mainWindow) return;
+    if (!mainWindow || quitting) return;
     if (forceEnv) {
       openEnvCheck(true);
       return;
@@ -379,7 +390,7 @@ async function bootServerIntoWindow(opts = {}) {
     showWorkbench();
     if (!config.firstRunDone) { config.firstRunDone = true; saveConfig(config); }
   } catch (e) {
-    showError('LoopForge 服务启动失败', String(e && e.message || e));
+    if (!quitting) showError('LoopForge 服务启动失败', String(e && e.message || e));
   }
 }
 
@@ -391,10 +402,13 @@ function showWorkbench() {
   mainWindow.focus();
 }
 
-async function restartServer() {
-  restartAttempts = 0;
-  await stopServer();
-  await bootServerIntoWindow();
+function restartServer() {
+  lifecycle.cancelRestart();
+  return lifecycle.run(async () => {
+    restartAttempts = 0;
+    await stopServer();
+    if (!quitting) await bootServerIntoWindowNow();
+  });
 }
 
 async function isLoggedIn() {
@@ -665,7 +679,7 @@ if (!app.requestSingleInstanceLock()) {
     buildMenu();
     updater = setupAutoUpdate({
       isWin,
-      onInstall: async () => { quitting = true; await stopServer(); },
+      onInstall: async () => { quitting = true; lifecycle.close(); await stopServer(); },
       getWindow: () => mainWindow,
       log: (m) => appendLog(m),
     });
@@ -686,6 +700,7 @@ if (!app.requestSingleInstanceLock()) {
   });
   app.on('window-all-closed', () => { app.quit(); });
   app.on('before-quit', (e) => {
+    lifecycle.close();
     if (server && !quitting) {
       quitting = true;
       e.preventDefault();
