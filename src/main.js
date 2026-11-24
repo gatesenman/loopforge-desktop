@@ -206,6 +206,7 @@ function startHealthWatch(s) {
 
 async function startServer() {
   const port = await pickPort();
+  if (quitting) throw new Error('启动已取消');
   const bin = serverBinary();
   if (!fs.existsSync(bin)) throw new Error(`缺少服务程序：${bin}`);
   for (const d of ['db', 'workspaces', 'assistant', 'conversations', 'clarify', 'cli']) fs.mkdirSync(path.join(DATA, d), { recursive: true });
@@ -713,8 +714,9 @@ if (!app.requestSingleInstanceLock()) {
   app.on('window-all-closed', () => { app.quit(); });
   app.on('before-quit', (e) => {
     lifecycle.close();
-    if (server && !quitting) {
-      quitting = true;
+    const alreadyQuitting = quitting;
+    quitting = true;
+    if (server && !alreadyQuitting) {
       e.preventDefault();
       stopServer().finally(() => app.quit());
     }
