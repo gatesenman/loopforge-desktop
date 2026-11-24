@@ -6,6 +6,15 @@ const { execFileSync } = require('child_process');
 const { walkDir } = require('../src/zipfile');
 const sha = file => crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex');
 function sourceHashes(dir) {
+  const check = current => {
+    for (const name of fs.readdirSync(current)) {
+      const file = path.join(current, name);
+      const st = fs.lstatSync(file);
+      if (st.isSymbolicLink() || (!st.isDirectory() && !st.isFile())) throw new Error('Source bundle contains an unsupported link or special file');
+      if (st.isDirectory()) check(file);
+    }
+  };
+  check(dir);
   return Object.fromEntries(walkDir(dir).sort((a,b) => a.name.localeCompare(b.name, 'en')).map(e => [e.name, sha(e.file)]));
 }
 function verifySource(dir, expected) {

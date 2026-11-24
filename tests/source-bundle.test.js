@@ -25,3 +25,12 @@ test('PE gate accepts GUI subsystem and rejects console subsystem', () => {
     data.writeUInt16LE(3,64+24+68); fs.writeFileSync(file,data); assert.throws(()=>guiPE(file),/Console subsystem/);
   } finally { fs.rmSync(dir,{recursive:true,force:true}); }
 });
+
+test('source verifier rejects unlisted symbolic links rather than silently skipping them', {skip: process.platform === 'win32' ? 'Creating arbitrary symlinks requires Windows developer mode; portable bundle links are regular target-text files' : false}, () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'lf-link-'));
+  try {
+    const manifest=sourceHashes(dir);
+    fs.symlinkSync('/outside-bundle',path.join(dir,'hidden.go'));
+    assert.throws(()=>verifySource(dir,manifest),/unsupported link/);
+  } finally { fs.rmSync(dir,{recursive:true,force:true}); }
+});
