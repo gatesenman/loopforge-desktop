@@ -11,6 +11,7 @@ const secret = require('./secret');
 const { readConfig, writeConfig } = require('./config-store');
 const { createLifecycle } = require('./lifecycle');
 const lifecycle = createLifecycle();
+const { navigationKind, isLocalPage } = require('./navigation');
 const { requiredChecksPass } = require('./startup-check');
 const { setupAutoUpdate } = require('./updater');
 const { exportDiagnostics } = require('./diagnostics');
@@ -297,7 +298,32 @@ function scheduleRestart(code) {
 
 // ---------- windows ----------
 function splashURL(message) {
-  return 'file://' + path.join(__dirname, 'splash.html') + '?m=' + encodeURIComponent(message || '');
+  return pathToFileURL(path.join(__dirname, 'splash.html')).href + '?m=' + encodeURIComponent(message || '');
+}
+
+function protectNavigation(win, allowLocal) {
+  const classify = (url) => navigationKind(url, server && server.url, __dirname);
+  const openExternal = (url) => shell.openExternal(url).catch(() => appendLog('external browser open failed'));
+  win.webContents.setWindowOpenHandler(({ url }) => {
+    const kind = classify(url);
+    if (kind === 'external') openExternal(url);
+    if (kind === 'internal') {
+      // Construct explicitly: never inherit the privileged local-page preload.
+      const child = new BrowserWindow({ width: 1280, height: 860, autoHideMenuBar: true,
+        webPreferences: { contextIsolation: true, sandbox: true, nodeIntegration: false } });
+      protectNavigation(child, false);
+      child.loadURL(url).catch(() => {});
+    }
+    return { action: 'deny' };
+  });
+  const navigate = (e, url) => {
+    const kind = classify(url);
+    if (kind === 'internal' || (allowLocal && kind === 'local')) return;
+    e.preventDefault();
+    if (kind === 'external') openExternal(url);
+  };
+  win.webContents.on('will-navigate', navigate);
+  win.webContents.on('will-redirect', navigate);
 }
 
 function createMainWindow() {
@@ -308,22 +334,7 @@ function createMainWindow() {
   });
   mainWindow.once('ready-to-show', () => mainWindow.show());
   mainWindow.loadURL(splashURL('正在启动 LoopForge 服务…'));
-  mainWindow.webContents.setWindowOpenHandler(({ url }) => {
-    if (server && url.startsWith(server.url)) {
-      return { action: 'allow', overrideBrowserWindowOptions: { width: 1280, height: 860, icon: path.join(__dirname, 'icon.ico'), autoHideMenuBar: true } };
-    }
-    if (/^https?:/i.test(url)) shell.openExternal(url);
-    return { action: 'deny' };
-  });
-  mainWindow.webContents.on('will-navigate', (e, url) => {
-    if (url.startsWith('file://')) return;
-    if (server && url.startsWith(server.url)) return;
-    if (/^https?:/i.test(url)) {
-      // OAuth flows may legitimately leave the app; open them in the browser.
-      e.preventDefault();
-      shell.openExternal(url);
-    }
-  });
+  protectNavigation(mainWindow, true);
   mainWindow.webContents.on('did-finish-load', () => {
     if (bootState === 'running') maybeOfferOnboarding();
   });
@@ -346,7 +357,7 @@ function openEnvCheck(firstRun) {
 function showError(title, detail) {
   bootState = 'error';
   if (mainWindow) {
-    mainWindow.loadURL('file://' + path.join(__dirname, 'error.html') + '?t=' + encodeURIComponent(title) + '&d=' + encodeURIComponent(detail));
+    mainWindow.loadURL(pathToFileURL(path.join(__dirname, 'error.html')).href + '?t=' + encodeURIComponent(title) + '&d=' + encodeURIComponent(detail));
   } else {
     dialog.showErrorBox(title, detail);
   }
@@ -627,9 +638,8 @@ function runHiddenCommand(command, sender) {
 // from the local server never can. Commands must come from the last check.
 let allowedActions = new Set();
 function trusted(e) {
-  const url = (e.senderFrame && e.senderFrame.url) || e.sender.getURL();
-  const allowed = ['envcheck.html', 'error.html', 'splash.html'].map((f) => pathToFileURL(path.join(__dirname, f)).href);
-  return !!mainWindow && e.sender === mainWindow.webContents && allowed.includes(url.split('?')[0]);
+  return !!mainWindow && e.sender === mainWindow.webContents &&
+    e.senderFrame === e.sender.mainFrame && isLocalPage(e.senderFrame.url, __dirname);
 }
 function guard(fn) {
   return (e, ...args) => { if (!trusted(e)) throw new Error('forbidden'); return fn(e, ...args); };
