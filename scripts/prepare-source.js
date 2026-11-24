@@ -43,6 +43,7 @@ function prepareSource(root, source, lock) {
   const archive = path.join(own, 'upstream.tar');
   run('git', ['archive', '--format=tar', '-o', archive, lock.commit], repo);
   run('tar', ['-xf', archive, '-C', source]);
+  fs.unlinkSync(archive);
   // Preserve symlink blobs as portable pointer files on Windows; retain exact
   // original targets in the source manifest so POSIX links can be restored.
   const symlinks = {};
