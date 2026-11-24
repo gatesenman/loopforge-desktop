@@ -111,8 +111,7 @@ async function checkBundledOrPath({ id, name, level, purpose, bin, args, bundled
     // install is broken — do not send the user to winget.
     return { id, name, level, purpose, status: 'error', detail: `安装包内未找到 ${bin}，请重新安装 LoopForge` };
   }
-  const isBundled = !!(bundled && found.toLowerCase() === bundled.toLowerCase()) ||
-    (bundledPaths || []).some((p) => found.toLowerCase().startsWith(path.dirname(p).toLowerCase()) || found.toLowerCase() === p.toLowerCase());
+  const isBundled = !!bundled;
   const v = await run(found, args || ['--version'], env);
   if (!v.ok) return { id, name, level, purpose, status: 'warn', path: found, bundled: isBundled, detail: `${bin} 无法运行：${firstLine(v.out)}` };
   const ver = /sh-ok/.test(v.out) ? '' : versionOf(v.out);
@@ -138,14 +137,24 @@ async function checkPython(env, pythonDir) {
 
 function checkDataDir(dataDir) {
   const r = { id: 'datadir', name: '数据目录', level: 'required', purpose: 'SQLite 数据库、工作区与日志', path: dataDir };
+  let probeDir;
+  let probe;
+  let failure;
   try {
     fs.mkdirSync(dataDir, { recursive: true });
-    const probe = path.join(dataDir, '.write-test');
-    fs.writeFileSync(probe, 'ok');
-    fs.unlinkSync(probe);
-  } catch (e) {
-    return { ...r, status: 'error', detail: `不可写：${e.message}` };
+    probeDir = fs.mkdtempSync(path.join(dataDir, '.loopforge-write-check-'));
+    probe = path.join(probeDir, 'probe');
+    fs.writeFileSync(probe, 'ok', { flag: 'wx', mode: 0o600 });
+  } catch (e) { failure = e; }
+  finally {
+    if (probe) {
+      try { fs.unlinkSync(probe); } catch (e) { if (e.code !== 'ENOENT') failure = failure || e; }
+    }
+    if (probeDir) {
+      try { fs.rmdirSync(probeDir); } catch (e) { failure = failure || e; }
+    }
   }
+  if (failure) return { ...r, status: 'error', detail: `目录读写或探针清理失败：${failure.code || 'IO_ERROR'}` };
   let free = '';
   try {
     if (fs.statfsSync) {
@@ -233,13 +242,13 @@ async function runChecks(ctx) {
 }
 
 function requiredReady(report) {
-  if (report && report.summary) return !!report.summary.requiredOk;
-  const list = Array.isArray(report) ? report : [];
-  const required = list.filter((r) => r.level === 'required');
-  return required.length > 0 && required.every((r) => r.status === 'ok');
+  const list = Array.isArray(report) ? report : (report && Array.isArray(report.results) ? report.results : []);
+  const required = list.filter((r) => r && r.level === 'required');
+  const ids = ['server', 'datadir', 'git', 'sh', 'node', 'npm', 'python'];
+  return ids.every(id => required.some(r => r.id === id && r.status === 'ok')) && required.every(r => r.status === 'ok');
 }
 
-module.exports = { runChecks, which, pathKey, AGENT_CLIS, requiredReady, npmCliJs, firstExisting, bundledCandidates };
+module.exports = { checkDataDir, runChecks, which, pathKey, AGENT_CLIS, requiredReady, npmCliJs, firstExisting, bundledCandidates };
 
 if (require.main === module) {
   runChecks({ dataDir: path.join(os.tmpdir(), 'loopforge-envcheck'), serverUrl: process.argv[2] || '' }).then((r) => {
