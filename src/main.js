@@ -15,6 +15,8 @@ const { navigationKind, isLocalPage } = require('./navigation');
 const { requiredChecksPass } = require('./startup-check');
 const { setupAutoUpdate } = require('./updater');
 const { exportDiagnostics } = require('./diagnostics');
+const { readTail, openBoundedLog } = require('./log-store');
+const { lifecycleSummary } = require('./redaction');
 
 const isWin = process.platform === 'win32';
 app.setName('LoopForge');
@@ -82,8 +84,7 @@ let config;
 function appendLog(line) {
   try {
     if (!serverLog) {
-      fs.mkdirSync(LOG_DIR, { recursive: true });
-      serverLog = fs.createWriteStream(path.join(LOG_DIR, 'server.log'), { flags: 'a' });
+      serverLog = openLog();
     }
     serverLog.write(String(line).endsWith('\n') ? line : line + '\n');
   } catch (_) { /* ignore */ }
@@ -160,13 +161,13 @@ async function pickPort() {
 }
 
 function openLog() {
-  fs.mkdirSync(LOG_DIR, { recursive: true });
-  const file = path.join(LOG_DIR, 'server.log');
-  try { if (fs.statSync(file).size > 10 * 1024 * 1024) fs.renameSync(file, file + '.1'); } catch (_) { /* none */ }
-  return fs.createWriteStream(file, { flags: 'a' });
+  return openBoundedLog(path.join(LOG_DIR, 'server.log'));
 }
-function tailLog(lines = 40) {
-  try { return fs.readFileSync(path.join(LOG_DIR, 'server.log'), 'utf8').split(/\r?\n/).slice(-lines).join('\n'); } catch (_) { return ''; }
+function tailLog() {
+  // Error pages are URLs and may appear in history/screenshots. Never put raw
+  // tool/provider output (which can contain credentials) into those URLs.
+  const counts = lifecycleSummary(readTail(path.join(LOG_DIR, 'server.log')));
+  return `生命周期摘要：${JSON.stringify(counts)}\n可通过“导出诊断包”提供不含原始日志的诊断。原始日志仅供本机检查，请勿直接分享。`;
 }
 
 function serverBinary() {
@@ -220,8 +221,9 @@ async function startServer() {
     appendLog('sidecar spawn failed: ' + err.message);
   });
   proc.stdin.on('error', () => {});
-  proc.stdout.on('data', (b) => serverLog && serverLog.write(b));
-  proc.stderr.on('data', (b) => serverLog && serverLog.write(b));
+  const ownedLog = serverLog;
+  proc.stdout.on('data', (b) => ownedLog.write(b));
+  proc.stderr.on('data', (b) => ownedLog.write(b));
   proc.on('exit', (code, sig) => {
     s.exited = true;
     if (server === s) clearHealthTimers();
